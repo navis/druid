@@ -332,6 +332,8 @@ public class IndexMerger
       ProgressIndicator progress
   ) throws IOException
   {
+    System.out.println("[IndexMerger/merge] START ");
+    long start = System.currentTimeMillis();
     FileUtils.deleteDirectory(outDir);
     if (!outDir.mkdirs()) {
       throw new ISE("Couldn't make outdir[%s].", outDir);
@@ -418,7 +420,7 @@ public class IndexMerger
       }
     };
 
-    return makeIndexFiles(
+    File file = makeIndexFiles(
         indexes,
         sortedMetricAggs,
         outDir,
@@ -428,6 +430,8 @@ public class IndexMerger
         rowMergerFn,
         indexSpec
     );
+    System.out.println("[IndexMerger/merge] END " + (System.currentTimeMillis() - start) + " msec");
+    return file;
   }
 
   // Faster than IndexMaker
@@ -713,12 +717,14 @@ public class IndexMerger
 
       dimensionCardinalities.put(dimension, cardinality);
 
+      long prev = System.currentTimeMillis();
       FileOutputSupplier dimOut = new FileOutputSupplier(IndexIO.makeDimFile(v8OutDir, dimension), true);
       dimOuts.add(dimOut);
 
       writer.close();
       serializerUtils.writeString(dimOut, dimension);
       ByteStreams.copy(writer.combineStreams(), dimOut);
+      log.info("completed writing dim [%s] in %,d millis.", dimension, System.currentTimeMillis() - prev);
 
       ioPeon.cleanup();
     }

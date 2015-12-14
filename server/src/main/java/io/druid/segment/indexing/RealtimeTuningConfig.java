@@ -220,4 +220,22 @@ public class RealtimeTuningConfig implements TuningConfig
         mergeThreadPriority
     );
   }
+
+  public RealtimeTuningConfig withV9()
+  {
+    return new RealtimeTuningConfig(
+        maxRowsInMemory,
+        intermediatePersistPeriod,
+        windowPeriod,
+        basePersistDirectory,
+        versioningPolicy,
+        rejectionPolicyFactory,
+        maxPendingPersists,
+        shardSpec,
+        indexSpec,
+        true,
+        persistThreadPriority,
+        mergeThreadPriority
+    );
+  }
 }

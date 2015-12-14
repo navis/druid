@@ -334,6 +334,7 @@ public class RealtimeIndexTask extends AbstractTask
         }
       }
 
+      int counter = 0;
       // Time to read data!
       while (firehose != null && (!gracefullyStopped || firehoseDrainableByClosing) && firehose.hasMore()) {
         final InputRow inputRow;
@@ -361,9 +362,13 @@ public class RealtimeIndexTask extends AbstractTask
         }
 
         fireDepartment.getMetrics().incrementProcessed();
+        if (++counter % 100000 == 0) {
+          System.out.println("[RealtimeIndexTask/run] " + counter + " rows..");
+        }
       }
     }
     catch (Throwable e) {
+      e.printStackTrace();
       normalExit = false;
       log.makeAlert(e, "Exception aborted realtime processing[%s]", dataSchema.getDataSource())
          .emit();

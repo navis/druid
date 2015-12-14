@@ -222,9 +222,14 @@ public class RealtimePlumber implements Plumber
     return retVal;
   }
 
+  private transient long prevPersist;
+
   @Override
   public int add(InputRow row, Supplier<Committer> committerSupplier) throws IndexSizeExceededException
   {
+    if (prevPersist == 0) {
+      prevPersist = System.currentTimeMillis();
+    }
     final Sink sink = getSink(row.getTimestampFromEpoch());
     if (sink == null) {
       return -1;
@@ -233,7 +238,9 @@ public class RealtimePlumber implements Plumber
     final int numRows = sink.add(row);
 
     if (!sink.canAppendRow() || System.currentTimeMillis() > nextFlush) {
+      System.out.println("[RealtimePlumber/add] " + numRows + " took " + (System.currentTimeMillis() - prevPersist) + " msec");
       persist(committerSupplier.get());
+      prevPersist = System.currentTimeMillis();
     }
 
     return numRows;
@@ -241,9 +248,9 @@ public class RealtimePlumber implements Plumber
 
   private Sink getSink(long timestamp)
   {
-    if (!rejectionPolicy.accept(timestamp)) {
-      return null;
-    }
+//    if (!rejectionPolicy.accept(timestamp)) {
+//      return null;
+//    }
 
     final Granularity segmentGranularity = schema.getGranularitySpec().getSegmentGranularity();
     final VersioningPolicy versioningPolicy = config.getVersioningPolicy();
@@ -407,12 +414,12 @@ public class RealtimePlumber implements Plumber
                                                   System.currentTimeMillis()
                                               );
 
-    persistExecutor.execute(
-        new ThreadRenamingRunnable(String.format("%s-incremental-persist", schema.getDataSource()))
-        {
-          @Override
-          public void doRun()
-          {
+//    persistExecutor.execute(
+//        new ThreadRenamingRunnable(String.format("%s-incremental-persist", schema.getDataSource()))
+//        {
+//          @Override
+//          public void doRun()
+//          {
             /* Note:
             If plumber crashes after storing a subset of all the hydrants then we will lose data and next
             time we will start with the commitMetadata stored in those hydrants.
@@ -459,9 +466,9 @@ public class RealtimePlumber implements Plumber
               metrics.incrementPersistTimeMillis(persistStopwatch.elapsed(TimeUnit.MILLISECONDS));
               persistStopwatch.stop();
             }
-          }
-        }
-    );
+//          }
+//        }
+//    );
 
     final long startDelay = runExecStopwatch.elapsed(TimeUnit.MILLISECONDS);
     metrics.incrementPersistBackPressureMillis(startDelay);
