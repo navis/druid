@@ -150,8 +150,8 @@ public class StringInputRowCustomParser implements ByteBufferInputRowParser
     Map<String,String> param = decoder.getParseColumn();
     List dimensionList = (List)dimensions;
     if(theMap.containsKey(param.get("columnField"))){
-      String[] paramKeys = ((String)theMap.get(param.get("columnField"))).split(":");
-      String[] paramValues = ((String)theMap.get(param.get("valueField"))).split(":");
+      String[] paramKeys = ((String)theMap.get(param.get("columnField"))).split(param.get("tokenizer"));
+      String[] paramValues = ((String)theMap.get(param.get("valueField"))).split(param.get("tokenizer"));
       for(int i=0; i < paramKeys.length; i++) {
         theMap.put(paramKeys[i],paramValues[i]);
         dimensionList.add(paramKeys[i]);
