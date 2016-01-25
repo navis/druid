@@ -19,34 +19,16 @@
 
 package io.druid.indexer;
 
-import com.fasterxml.jackson.databind.Module;
-import com.fasterxml.jackson.databind.jsontype.NamedType;
-import com.fasterxml.jackson.databind.module.SimpleModule;
-import com.google.inject.Binder;
-import io.druid.initialization.DruidModule;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import io.druid.data.input.InputRow;
+import io.druid.data.input.impl.DelimitedParseSpec;
 
-import java.util.Arrays;
-import java.util.List;
-
-/**
- */
-public class IndexingHadoopModule implements DruidModule
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
+@JsonSubTypes({
+    @JsonSubTypes.Type(name = "hadoopCustom", value = HadoopCustomStringDecoder.class)
+})
+public interface HadoopCustomDecoder
 {
-  @Override
-  public List<? extends Module> getJacksonModules()
-  {
-    return Arrays.<Module>asList(
-        new SimpleModule("IndexingHadoopModule")
-            .registerSubtypes(
-                new NamedType(HadoopyStringInputRowParser.class, "hadoopyString")
-            ).registerSubtypes(
-                new NamedType(HadoopyStringCustomInputRowParser.class, "hadoopyStringCustom")
-        )
-    );
-  }
-
-  @Override
-  public void configure(Binder binder)
-  {
-  }
+  public InputRow decodeMessage(String msg, DelimitedParseSpec inputParseSpec);
 }
