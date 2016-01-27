@@ -129,6 +129,7 @@ public class SegmentMetadataQueryTest
         ImmutableMap.of(
             "__time",
             new ColumnAnalysis(
+                false,
                 ValueType.LONG.toString(),
                 false,
                 12090,
@@ -137,6 +138,7 @@ public class SegmentMetadataQueryTest
             ),
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 false,
                 usingMmappedSegment ? 10881 : 0,
@@ -145,6 +147,7 @@ public class SegmentMetadataQueryTest
             ),
             "index",
             new ColumnAnalysis(
+                false,
                 ValueType.FLOAT.toString(),
                 false,
                 9672,
@@ -178,6 +181,7 @@ public class SegmentMetadataQueryTest
         ImmutableMap.of(
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 false,
                 0,
@@ -186,6 +190,7 @@ public class SegmentMetadataQueryTest
             ),
             "placementish",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 true,
                 0,
@@ -238,6 +243,7 @@ public class SegmentMetadataQueryTest
         ImmutableMap.of(
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 false,
                 0,
@@ -246,6 +252,7 @@ public class SegmentMetadataQueryTest
             ),
             "quality_uniques",
             new ColumnAnalysis(
+                false,
                 "hyperUnique",
                 false,
                 0,
@@ -298,6 +305,7 @@ public class SegmentMetadataQueryTest
         ImmutableMap.of(
             "__time",
             new ColumnAnalysis(
+                false,
                 ValueType.LONG.toString(),
                 false,
                 12090 * 2,
@@ -306,6 +314,7 @@ public class SegmentMetadataQueryTest
             ),
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 false,
                 usingMmappedSegment ? 21762 : 0,
@@ -314,6 +323,7 @@ public class SegmentMetadataQueryTest
             ),
             "index",
             new ColumnAnalysis(
+                false,
                 ValueType.FLOAT.toString(),
                 false,
                 9672 * 2,
@@ -360,6 +370,7 @@ public class SegmentMetadataQueryTest
         ImmutableMap.of(
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 false,
                 0,
@@ -416,6 +427,7 @@ public class SegmentMetadataQueryTest
         ImmutableMap.of(
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 false,
                 0,

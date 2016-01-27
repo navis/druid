@@ -75,6 +75,7 @@ public class SegmentMetadataQueryQueryToolChestTest
         ImmutableMap.of(
             "placement",
             new ColumnAnalysis(
+                true,
                 ValueType.STRING.toString(),
                 true,
                 10881,

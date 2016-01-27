@@ -98,13 +98,14 @@ public class SegmentAnalyzer
       final ValueType type = capabilities.getType();
       switch (type) {
         case LONG:
-          analysis = analyzeNumericColumn(capabilities, length, Longs.BYTES);
+          analysis = analyzeNumericColumn(capabilities, length, Longs.BYTES, false);
           break;
         case FLOAT:
-          analysis = analyzeNumericColumn(capabilities, length, NUM_BYTES_IN_TEXT_FLOAT);
+          analysis = analyzeNumericColumn(capabilities, length, NUM_BYTES_IN_TEXT_FLOAT, false);
           break;
         case STRING:
-          analysis = analyzeStringColumn(capabilities, column, storageAdapter.getDimensionCardinality(columnName));
+          int cardinality = storageAdapter.getDimensionCardinality(columnName);
+          analysis = analyzeStringColumn(capabilities, column, cardinality, true);
           break;
         case COMPLEX:
           analysis = analyzeComplexColumn(capabilities, column, storageAdapter.getColumnTypeName(columnName));
@@ -124,7 +125,7 @@ public class SegmentAnalyzer
     }
     columns.put(
         Column.TIME_COLUMN_NAME,
-        analyzeNumericColumn(timeCapabilities, length, NUM_BYTES_IN_TIMESTAMP)
+        analyzeNumericColumn(timeCapabilities, length, NUM_BYTES_IN_TIMESTAMP, false)
     );
 
     return columns;
@@ -143,7 +144,8 @@ public class SegmentAnalyzer
   private ColumnAnalysis analyzeNumericColumn(
       final ColumnCapabilities capabilities,
       final int length,
-      final int sizePerRow
+      final int sizePerRow,
+      final boolean isDimension
   )
   {
     long size = 0;
@@ -157,6 +159,7 @@ public class SegmentAnalyzer
     }
 
     return new ColumnAnalysis(
+        isDimension,
         capabilities.getType().name(),
         capabilities.hasMultipleValues(),
         size,
@@ -168,7 +171,8 @@ public class SegmentAnalyzer
   private ColumnAnalysis analyzeStringColumn(
       final ColumnCapabilities capabilities,
       @Nullable final Column column,
-      final int cardinality
+      final int cardinality,
+      final boolean isDimension
   )
   {
     long size = 0;
@@ -192,6 +196,7 @@ public class SegmentAnalyzer
     }
 
     return new ColumnAnalysis(
+        isDimension,
         capabilities.getType().name(),
         capabilities.hasMultipleValues(),
         size,
@@ -218,7 +223,7 @@ public class SegmentAnalyzer
 
       final Function<Object, Long> inputSizeFn = serde.inputSizeFn();
       if (inputSizeFn == null) {
-        return new ColumnAnalysis(typeName, hasMultipleValues, 0, null, null);
+        return new ColumnAnalysis(false, typeName, hasMultipleValues, 0, null, null);
       }
 
       final int length = column.getLength();
@@ -228,6 +233,7 @@ public class SegmentAnalyzer
     }
 
     return new ColumnAnalysis(
+        false,
         typeName,
         hasMultipleValues,
         size,

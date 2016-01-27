@@ -32,10 +32,11 @@ public class ColumnAnalysis
 
   public static ColumnAnalysis error(String reason)
   {
-    return new ColumnAnalysis("STRING", false, -1, null, ERROR_PREFIX + reason);
+    return new ColumnAnalysis(false, "STRING", false, -1, null, ERROR_PREFIX + reason);
   }
 
   private final String type;
+  private final boolean isDimension;
   private final boolean hasMultipleValues;
   private final long size;
   private final Integer cardinality;
@@ -43,6 +44,7 @@ public class ColumnAnalysis
 
   @JsonCreator
   public ColumnAnalysis(
+      @JsonProperty("dimension") boolean isDimension,
       @JsonProperty("type") String type,
       @JsonProperty("hasMultipleValues") boolean hasMultipleValues,
       @JsonProperty("size") long size,
@@ -51,10 +53,17 @@ public class ColumnAnalysis
   )
   {
     this.type = type;
+    this.isDimension = isDimension;
     this.hasMultipleValues = hasMultipleValues;
     this.size = size;
     this.cardinality = cardinality;
     this.errorMessage = errorMessage;
+  }
+
+  @JsonProperty
+  public boolean isDimension()
+  {
+    return isDimension;
   }
 
   @JsonProperty
@@ -114,6 +123,7 @@ public class ColumnAnalysis
     }
 
     return new ColumnAnalysis(
+        isDimension,
         type,
         hasMultipleValues || rhs.isHasMultipleValues(),
         size + rhs.getSize(),
@@ -126,7 +136,8 @@ public class ColumnAnalysis
   public String toString()
   {
     return "ColumnAnalysis{" +
-           "type='" + type + '\'' +
+           "isDimension='" + isDimension + '\'' +
+           ", type='" + type + '\'' +
            ", hasMultipleValues=" + hasMultipleValues +
            ", size=" + size +
            ", cardinality=" + cardinality +
@@ -145,6 +156,7 @@ public class ColumnAnalysis
     }
     ColumnAnalysis that = (ColumnAnalysis) o;
     return hasMultipleValues == that.hasMultipleValues &&
+           isDimension == that.isDimension &&
            size == that.size &&
            Objects.equals(type, that.type) &&
            Objects.equals(cardinality, that.cardinality) &&
@@ -154,6 +166,6 @@ public class ColumnAnalysis
   @Override
   public int hashCode()
   {
-    return Objects.hash(type, hasMultipleValues, size, cardinality, errorMessage);
+    return Objects.hash(isDimension, type, hasMultipleValues, size, cardinality, errorMessage);
   }
 }
