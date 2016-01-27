@@ -57,7 +57,6 @@ import io.druid.segment.data.GenericIndexed;
 import io.druid.segment.data.GenericIndexedWriter;
 import io.druid.segment.data.IOPeon;
 import io.druid.segment.data.Indexed;
-import io.druid.segment.data.IndexedIntsWriter;
 import io.druid.segment.data.IndexedRTree;
 import io.druid.segment.data.TmpFileIOPeon;
 import io.druid.segment.data.VSizeIndexedIntsWriter;
@@ -192,7 +191,7 @@ public class IndexMergerV9 extends IndexMerger
         rowMergerFn
     );
     final LongColumnSerializer timeWriter = setupTimeWriter(ioPeon);
-    final ArrayList<IndexedIntsWriter> dimWriters = setupDimensionWriters(
+    final ArrayList<GenericColumnSerializer> dimWriters = setupDimensionWriters(
         ioPeon, mergedDimensions, dimCapabilities, dimCardinalities, indexSpec
     );
     final ArrayList<GenericColumnSerializer> metWriters = setupMetricsWriters(
@@ -328,7 +327,7 @@ public class IndexMergerV9 extends IndexMerger
       final ArrayList<Boolean> dimensionSkipFlag,
       final List<ColumnCapabilitiesImpl> dimCapabilities,
       final ArrayList<GenericIndexedWriter<String>> dimValueWriters,
-      final ArrayList<IndexedIntsWriter> dimWriters,
+      final ArrayList<GenericColumnSerializer> dimWriters,
       final ArrayList<GenericIndexedWriter<ImmutableBitmap>> bitmapIndexWriters,
       final ArrayList<ByteBufferWriter<ImmutableRTree>> spatialIndexWriters
   ) throws IOException
@@ -342,7 +341,7 @@ public class IndexMergerV9 extends IndexMerger
     for (int i = 0; i < mergedDimensions.size(); ++i) {
       long dimStartTime = System.currentTimeMillis();
       final String dim = mergedDimensions.get(i);
-      final IndexedIntsWriter dimWriter = dimWriters.get(i);
+      final GenericColumnSerializer dimWriter = dimWriters.get(i);
       final GenericIndexedWriter<ImmutableBitmap> bitmapIndexWriter = bitmapIndexWriters.get(i);
       final ByteBufferWriter<ImmutableRTree> spatialIndexWriter = spatialIndexWriters.get(i);
 
@@ -648,7 +647,7 @@ public class IndexMergerV9 extends IndexMerger
       final ProgressIndicator progress,
       final Iterable<Rowboat> theRows,
       final LongColumnSerializer timeWriter,
-      final ArrayList<IndexedIntsWriter> dimWriters,
+      final ArrayList<GenericColumnSerializer> dimWriters,
       final ArrayList<GenericColumnSerializer> metWriters,
       final ArrayList<Boolean> dimensionSkipFlag,
       final List<IntBuffer> rowNumConversions,
@@ -689,7 +688,7 @@ public class IndexMergerV9 extends IndexMerger
           // that matches the null/empty str's dictionary ID should also be added to nullRowsList.
           nullRowsList.get(i).add(rowCount);
         }
-        dimWriters.get(i).add(dims[i]);
+        dimWriters.get(i).serialize(dims[i]);
       }
 
       for (Map.Entry<Integer, TreeSet<Integer>> comprisedRow : theRow.getComprisedRows().entrySet()) {
@@ -762,7 +761,7 @@ public class IndexMergerV9 extends IndexMerger
     return metWriters;
   }
 
-  private ArrayList<IndexedIntsWriter> setupDimensionWriters(
+  private ArrayList<GenericColumnSerializer> setupDimensionWriters(
       final IOPeon ioPeon,
       final List<String> mergedDimensions,
       final List<ColumnCapabilitiesImpl> dimCapabilities,
@@ -770,14 +769,14 @@ public class IndexMergerV9 extends IndexMerger
       final IndexSpec indexSpec
   ) throws IOException
   {
-    ArrayList<IndexedIntsWriter> dimWriters = Lists.newArrayListWithCapacity(mergedDimensions.size());
+    ArrayList<GenericColumnSerializer> dimWriters = Lists.newArrayListWithCapacity(mergedDimensions.size());
     final CompressedObjectStrategy.CompressionStrategy dimCompression = indexSpec.getDimensionCompressionStrategy();
     for (int dimIndex = 0; dimIndex < mergedDimensions.size(); ++dimIndex) {
       String dim = mergedDimensions.get(dimIndex);
       int cardinality = dimCardinalities.get(dim);
       ColumnCapabilitiesImpl capabilities = dimCapabilities.get(dimIndex);
       String filenameBase = String.format("%s.forward_dim", dim);
-      IndexedIntsWriter writer;
+      GenericColumnSerializer writer;
       if (capabilities.hasMultipleValues()) {
         writer = (dimCompression != null)
                  ? CompressedVSizeIndexedV3Writer.create(ioPeon, filenameBase, cardinality, dimCompression)

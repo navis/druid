@@ -90,9 +90,9 @@ public class CompressedVSizeIndexedV3Writer extends MultiValueIndexedIntsWriter
     if (vals == null) {
       vals = EMPTY_LIST;
     }
-    offsetWriter.add(offset);
+    offsetWriter.serialize(offset);
     for (Integer val : vals) {
-      valueWriter.add(val);
+      valueWriter.serialize(val);
     }
     offset += vals.size();
   }
@@ -101,7 +101,7 @@ public class CompressedVSizeIndexedV3Writer extends MultiValueIndexedIntsWriter
   public void close() throws IOException
   {
     try {
-      offsetWriter.add(offset);
+      offsetWriter.serialize(offset);
     }
     finally {
       offsetWriter.close();

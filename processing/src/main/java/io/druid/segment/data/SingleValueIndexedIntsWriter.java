@@ -20,13 +20,14 @@
 package io.druid.segment.data;
 
 import com.metamx.common.IAE;
+import io.druid.segment.GenericColumnSerializer;
 
 import java.io.IOException;
 
-public abstract class SingleValueIndexedIntsWriter implements IndexedIntsWriter
+public abstract class SingleValueIndexedIntsWriter implements GenericColumnSerializer
 {
   @Override
-  public void add(Object obj) throws IOException
+  public void serialize(Object obj) throws IOException
   {
     if (obj == null) {
       addValue(0);

@@ -112,7 +112,7 @@ public class CompressedVSizeIntsIndexedWriterTest
     );
     writer.open();
     for (int val : vals) {
-      writer.add(val);
+      writer.serialize(val);
     }
     writer.close();
     long writtenLength = writer.getSerializedSize();

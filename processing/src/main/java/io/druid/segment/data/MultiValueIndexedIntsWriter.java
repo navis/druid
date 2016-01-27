@@ -21,14 +21,15 @@ package io.druid.segment.data;
 
 import com.google.common.primitives.Ints;
 import com.metamx.common.IAE;
+import io.druid.segment.GenericColumnSerializer;
 
 import java.io.IOException;
 import java.util.List;
 
-public abstract class MultiValueIndexedIntsWriter implements IndexedIntsWriter
+public abstract class MultiValueIndexedIntsWriter implements GenericColumnSerializer
 {
   @Override
-  public void add(Object obj) throws IOException
+  public void serialize(Object obj) throws IOException
   {
     if (obj == null) {
       addValues(null);
