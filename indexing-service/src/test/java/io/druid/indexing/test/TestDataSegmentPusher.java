@@ -21,14 +21,18 @@ package io.druid.indexing.test;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
+import io.druid.query.SegmentDescriptor;
 import io.druid.segment.loading.DataSegmentPusher;
+import io.druid.segment.realtime.plumber.SegmentHandoffNotifier;
+import io.druid.segment.realtime.plumber.SegmentHandoffNotifierFactory;
 import io.druid.timeline.DataSegment;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.Set;
+import java.util.concurrent.Executor;
 
-public class TestDataSegmentPusher implements DataSegmentPusher
+public class TestDataSegmentPusher implements DataSegmentPusher, SegmentHandoffNotifierFactory
 {
   private final Set<DataSegment> pushedSegments = Sets.newConcurrentHashSet();
 
@@ -48,5 +52,46 @@ public class TestDataSegmentPusher implements DataSegmentPusher
   public Set<DataSegment> getPushedSegments()
   {
     return ImmutableSet.copyOf(pushedSegments);
+  }
+
+  @Override
+  public SegmentHandoffNotifier createSegmentHandoffNotifier(String dataSource)
+  {
+    return new SegmentHandoffNotifier()
+    {
+      @Override
+      public boolean registerSegmentHandoffCallback(
+          SegmentDescriptor descriptor, Executor exec, Runnable handOffRunnable
+      )
+      {
+        for (int i = 0; i < 10; i++) {
+          for (DataSegment segment : getPushedSegments()) {
+            if (segment.getVersion().equals(descriptor.getVersion()) && segment.getInterval().equals(descriptor.getInterval())) {
+              handOffRunnable.run();
+              return true;
+            }
+          }
+          try {
+            Thread.sleep(1000);
+          }
+          catch (InterruptedException e) {
+            return false;
+          }
+        }
+        return false;
+      }
+
+      @Override
+      public void start()
+      {
+
+      }
+
+      @Override
+      public void stop()
+      {
+
+      }
+    };
   }
 }

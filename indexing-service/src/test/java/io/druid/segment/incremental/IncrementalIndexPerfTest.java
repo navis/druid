@@ -37,6 +37,7 @@ import io.druid.data.input.impl.TimestampSpec;
 import io.druid.granularity.QueryGranularity;
 import io.druid.indexing.common.SegmentLoaderFactory;
 import io.druid.indexing.common.TaskStatus;
+import io.druid.indexing.common.TaskToolbox;
 import io.druid.indexing.common.TaskToolboxFactory;
 import io.druid.indexing.common.TestUtils;
 import io.druid.indexing.common.actions.LocalTaskActionClient;
@@ -45,6 +46,7 @@ import io.druid.indexing.common.actions.TaskActionClientFactory;
 import io.druid.indexing.common.actions.TaskActionToolbox;
 import io.druid.indexing.common.config.TaskConfig;
 import io.druid.indexing.common.config.TaskStorageConfig;
+import io.druid.indexing.common.task.IndexTask;
 import io.druid.indexing.common.task.RealtimeIndexTask;
 import io.druid.indexing.common.task.Task;
 import io.druid.indexing.common.task.TaskResource;
@@ -57,7 +59,6 @@ import io.druid.indexing.test.TestIndexerMetadataStorageCoordinator;
 import io.druid.query.DefaultQueryRunnerFactoryConglomerate;
 import io.druid.query.Query;
 import io.druid.query.QueryRunnerFactory;
-import io.druid.query.SegmentDescriptor;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.segment.IndexIO;
@@ -66,6 +67,7 @@ import io.druid.segment.QueryableIndexIndexableAdapter;
 import io.druid.segment.indexing.DataSchema;
 import io.druid.segment.indexing.RealtimeIOConfig;
 import io.druid.segment.indexing.RealtimeTuningConfig;
+import io.druid.segment.indexing.TuningConfig;
 import io.druid.segment.indexing.granularity.GranularitySpec;
 import io.druid.segment.indexing.granularity.UniformGranularitySpec;
 import io.druid.segment.loading.SegmentLoaderConfig;
@@ -73,8 +75,6 @@ import io.druid.segment.loading.SegmentLoaderLocalCacheManager;
 import io.druid.segment.loading.StorageLocationConfig;
 import io.druid.segment.realtime.FireDepartment;
 import io.druid.segment.realtime.firehose.LocalFirehoseFactory;
-import io.druid.segment.realtime.plumber.SegmentHandoffNotifier;
-import io.druid.segment.realtime.plumber.SegmentHandoffNotifierFactory;
 import io.druid.server.metrics.NoopServiceEmitter;
 import org.easymock.EasyMock;
 import org.joda.time.DateTime;
@@ -87,7 +87,6 @@ import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executor;
 
 /**
  */
@@ -109,6 +108,31 @@ public class IncrementalIndexPerfTest
         granularitySpec,
         testUtils.getTestObjectMapper()
     );
+  }
+
+  private Task createIndexTask(
+      DataSchema schema,
+      FirehoseFactory factory,
+      TuningConfig tuning
+  )
+  {
+    if (tuning instanceof RealtimeTuningConfig) {
+      final FireDepartment department = new FireDepartment(
+          schema,
+          new RealtimeIOConfig(factory, null, null),
+          (RealtimeTuningConfig) tuning
+      );
+
+      return new RealtimeIndexTask("test", new TaskResource("", 0), department, null);
+    }
+
+    final IndexTask.IndexIngestionSpec ingestion = new IndexTask.IndexIngestionSpec(
+        schema,
+        new IndexTask.IndexIOConfig(factory),
+        (IndexTask.IndexTuningConfig) tuning
+    );
+
+    return new IndexTask("test", new TaskResource("", 0), ingestion, testUtils.getTestObjectMapper(), null);
   }
 
   @Test
@@ -154,20 +178,24 @@ public class IncrementalIndexPerfTest
 
     final DataSchema schema = toDataSchema(parseSpec, new AggregatorFactory[0], null);
 
-    final RealtimeTuningConfig tuning =
+    final TuningConfig tuning =
         RealtimeTuningConfig.makeDefaultTuningConfig()
                             .withV9()
                             .withMaxPendingPersists(-1);
 
-    runTest(schema, factory, tuning);
+//    final TuningConfig tuning = new IndexTask.IndexTuningConfig(0, 0, -1, null, true);
+
+    final Task task = createIndexTask(schema, factory, tuning);
+
+    runTask(task);
   }
 
   @Test
-  public void dfnLoadTest() throws Exception
+  public void jsonDFNLoadTest() throws Exception
   {
     final TimestampSpec timestampSpec = new TimestampSpec("timestamp", "auto", null);
     final DimensionsSpec dimensionsSpec = new DimensionsSpec(null, null, null);
-    final ParseSpec parseSpec = new JSONParseSpec(timestampSpec, dimensionsSpec);
+    final ParseSpec parseSpec = new JSONParseSpec(timestampSpec, dimensionsSpec, null, null);
 
     final FirehoseFactory factory = new LocalFirehoseFactory(
         new File("/Users/navis/tmp/hynix"),
@@ -185,12 +213,62 @@ public class IncrementalIndexPerfTest
         )
     );
 
-    final RealtimeTuningConfig tuning = RealtimeTuningConfig.makeDefaultTuningConfig().withV9().withMaxRow(200000);
+    final TuningConfig tuning = RealtimeTuningConfig.makeDefaultTuningConfig().withV9().withMaxRow(200000);
+//    final TuningConfig tuning = new IndexTask.IndexTuningConfig(0, 200000, -1, null, true);
+    final Task task = createIndexTask(schema, factory, tuning);
 
-    runTest(schema, factory, tuning);
+    runTask(task);
   }
 
-  private void runTest(DataSchema schema, FirehoseFactory factory, RealtimeTuningConfig tuning) throws Exception
+  @Test
+  public void csvDFNLoadTest() throws Exception
+  {
+    final List<String> dimensions = Arrays.asList(
+        "param_name",
+        "max",
+        "wifer_id",
+        "zone",
+        "min",
+        "timestamp",
+        "area",
+        "median",
+        "range",
+        "step",
+        "stddev",
+        "operation_id",
+        "lot_id",
+        "eqp_id",
+        "mean"
+    );
+
+    final TimestampSpec timestampSpec = new TimestampSpec("timestamp", "auto", null);
+    final DimensionsSpec dimensionsSpec = new DimensionsSpec(null, null, null);
+    final ParseSpec parseSpec = new DelimitedParseSpec(timestampSpec, dimensionsSpec, "|", null, dimensions);
+
+    final FirehoseFactory factory = new LocalFirehoseFactory(
+        new File("/Users/navis/tmp/hynix"),
+        "summary_DFN409_all.csv",
+        null
+    );
+
+    final DataSchema schema = toDataSchema(
+        parseSpec,
+        new AggregatorFactory[]{new CountAggregatorFactory("count")},
+        new UniformGranularitySpec(
+            Granularity.HOUR,
+            QueryGranularity.NONE,
+            Arrays.asList(Interval.parse("2015-11-10/2015-12-30"))
+        )
+    );
+
+    final TuningConfig tuning = RealtimeTuningConfig.makeDefaultTuningConfig().withV9().withMaxRow(200000);
+//    final TuningConfig tuning = new IndexTask.IndexTuningConfig(0, 200000, -1, null, true);
+    final Task task = createIndexTask(schema, factory, tuning);
+
+    runTask(task);
+  }
+
+  private void runTask(final Task task) throws Exception
   {
     final HeapMemoryTaskStorage taskStorage = new HeapMemoryTaskStorage(new TaskStorageConfig(null));
     final TaskLockbox taskLockbox = new TaskLockbox(taskStorage);
@@ -210,44 +288,18 @@ public class IncrementalIndexPerfTest
     final String baseDir = Files.createTempDir().toString();
     final TaskConfig taskConfig = new TaskConfig(baseDir, null, null, 0, null, false, null, null);
 
-    final SegmentHandoffNotifierFactory handoffNotifierFactory = new SegmentHandoffNotifierFactory()
-    {
-      @Override
-      public SegmentHandoffNotifier createSegmentHandoffNotifier(String dataSource)
-      {
-        return new SegmentHandoffNotifier()
-        {
-          @Override
-          public boolean registerSegmentHandoffCallback(
-              SegmentDescriptor descriptor, Executor exec, Runnable handOffRunnable
-          )
-          {
-            return true;
-          }
-
-          @Override
-          public void start()
-          {
-          }
-
-          @Override
-          public void stop()
-          {
-          }
-        };
-      }
-    };
+    final TestDataSegmentPusher segmentPusher = new TestDataSegmentPusher();
 
     final TaskToolboxFactory toolboxFactory = new TaskToolboxFactory(
         taskConfig,
         taskActionClientFactory,
         new NoopServiceEmitter(),
-        new TestDataSegmentPusher(),
+        segmentPusher,
         new TestDataSegmentKiller(),
         null, // DataSegmentMover
         null, // DataSegmentArchiver
         new TestDataSegmentAnnouncer(),
-        handoffNotifierFactory,
+        segmentPusher,  // SegmentHandoffNotifierFactory
         new DefaultQueryRunnerFactoryConglomerate(Maps.<Class<? extends Query>, QueryRunnerFactory>newHashMap()),
         MoreExecutors.sameThreadExecutor(), // queryExecutorService
         EasyMock.createMock(MonitorScheduler.class),
@@ -272,17 +324,14 @@ public class IncrementalIndexPerfTest
         testUtils.getTestIndexMergerV9()
     );
 
-    final FireDepartment department = new FireDepartment(
-        schema,
-        new RealtimeIOConfig(factory, null, null),
-        tuning
-    );
-
-    RealtimeIndexTask task = new RealtimeIndexTask("test", new TaskResource("", 0), department, null);
     taskLockbox.add(task);
 
     long start = System.currentTimeMillis();
-    TaskStatus status = task.run(toolboxFactory.build(task));
+    final TaskToolbox taskToolbox = toolboxFactory.build(task);
+    if (!task.isReady(taskToolbox.getTaskActionClient())) {
+      throw new IllegalStateException("not-ready");
+    }
+    TaskStatus status = task.run(taskToolbox);
 
     System.out.println(status + " in: " + baseDir + ", took: " + (System.currentTimeMillis() - start) + " msec");
   }
