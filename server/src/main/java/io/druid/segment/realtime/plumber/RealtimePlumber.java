@@ -414,12 +414,12 @@ public class RealtimePlumber implements Plumber
                                                   System.currentTimeMillis()
                                               );
 
-//    persistExecutor.execute(
-//        new ThreadRenamingRunnable(String.format("%s-incremental-persist", schema.getDataSource()))
-//        {
-//          @Override
-//          public void doRun()
-//          {
+    persistExecutor.execute(
+        new ThreadRenamingRunnable(String.format("%s-incremental-persist", schema.getDataSource()))
+        {
+          @Override
+          public void doRun()
+          {
             /* Note:
             If plumber crashes after storing a subset of all the hydrants then we will lose data and next
             time we will start with the commitMetadata stored in those hydrants.
@@ -466,9 +466,9 @@ public class RealtimePlumber implements Plumber
               metrics.incrementPersistTimeMillis(persistStopwatch.elapsed(TimeUnit.MILLISECONDS));
               persistStopwatch.stop();
             }
-//          }
-//        }
-//    );
+          }
+        }
+    );
 
     final long startDelay = runExecStopwatch.elapsed(TimeUnit.MILLISECONDS);
     metrics.incrementPersistBackPressureMillis(startDelay);
@@ -662,12 +662,17 @@ public class RealtimePlumber implements Plumber
     final int maxPendingPersists = config.getMaxPendingPersists();
 
     if (persistExecutor == null) {
-      // use a blocking single threaded executor to throttle the firehose when write to disk is slow
-      persistExecutor = Execs.newBlockingSingleThreaded(
-          "plumber_persist_%d",
-          maxPendingPersists,
-          TaskThreadPriority.getThreadPriorityFromTaskPriority(config.getPersistThreadPriority())
-      );
+      if (maxPendingPersists < 0) {
+        // for tests
+        persistExecutor = MoreExecutors.sameThreadExecutor();
+      } else {
+        // use a blocking single threaded executor to throttle the firehose when write to disk is slow
+        persistExecutor = Execs.newBlockingSingleThreaded(
+            "plumber_persist_%d",
+            maxPendingPersists,
+            TaskThreadPriority.getThreadPriorityFromTaskPriority(config.getPersistThreadPriority())
+        );
+      }
     }
     if (mergeExecutor == null) {
       // use a blocking single threaded executor to throttle the firehose when write to disk is slow

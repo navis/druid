@@ -238,4 +238,41 @@ public class RealtimeTuningConfig implements TuningConfig
         mergeThreadPriority
     );
   }
+
+  public RealtimeTuningConfig withMaxRow(int maxRowsInMemory)
+  {
+    return new RealtimeTuningConfig(
+        maxRowsInMemory,
+        intermediatePersistPeriod,
+        windowPeriod,
+        basePersistDirectory,
+        versioningPolicy,
+        rejectionPolicyFactory,
+        maxPendingPersists,
+        shardSpec,
+        indexSpec,
+        buildV9Directly,
+        persistThreadPriority,
+        mergeThreadPriority
+    );
+  }
+
+
+  public RealtimeTuningConfig withMaxPendingPersists(int maxPendingPersists)
+  {
+    return new RealtimeTuningConfig(
+        maxRowsInMemory,
+        intermediatePersistPeriod,
+        windowPeriod,
+        basePersistDirectory,
+        versioningPolicy,
+        rejectionPolicyFactory,
+        maxPendingPersists,
+        shardSpec,
+        indexSpec,
+        buildV9Directly,
+        persistThreadPriority,
+        mergeThreadPriority
+    );
+  }
 }
