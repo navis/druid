@@ -43,13 +43,11 @@ import com.metamx.common.logger.Logger;
 import io.druid.collections.CombiningIterable;
 import io.druid.common.utils.JodaUtils;
 import io.druid.query.aggregation.AggregatorFactory;
-import io.druid.segment.column.BitmapIndexSeeker;
 import io.druid.segment.column.Column;
 import io.druid.segment.column.ColumnCapabilities;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ColumnDescriptor;
 import io.druid.segment.column.ValueType;
-import io.druid.segment.data.ArrayIndexed;
 import io.druid.segment.data.BitmapSerdeFactory;
 import io.druid.segment.data.ByteBufferWriter;
 import io.druid.segment.data.CompressedObjectStrategy;
@@ -60,7 +58,6 @@ import io.druid.segment.data.GenericIndexedWriter;
 import io.druid.segment.data.IOPeon;
 import io.druid.segment.data.Indexed;
 import io.druid.segment.data.IndexedIntsWriter;
-import io.druid.segment.data.IndexedIterable;
 import io.druid.segment.data.IndexedRTree;
 import io.druid.segment.data.TmpFileIOPeon;
 import io.druid.segment.data.VSizeIndexedIntsWriter;
@@ -76,7 +73,6 @@ import org.apache.commons.io.FileUtils;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
-import javax.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -123,7 +119,6 @@ public class IndexMergerV9 extends IndexMerger
         adapters,
         new Function<IndexableAdapter, Metadata>()
         {
-          @Nullable
           @Override
           public Metadata apply(IndexableAdapter input)
           {
@@ -175,15 +170,23 @@ public class IndexMergerV9 extends IndexMerger
     final ArrayList<GenericIndexedWriter<String>> dimValueWriters = setupDimValueWriters(ioPeon, mergedDimensions);
     final ArrayList<Map<String, IntBuffer>> dimConversions = Lists.newArrayListWithCapacity(adapters.size());
     final ArrayList<Boolean> dimensionSkipFlag = Lists.newArrayListWithCapacity(mergedDimensions.size());
+    final ArrayList<Boolean> dimHasNullFlags = Lists.newArrayListWithCapacity(mergedDimensions.size());
+    final ArrayList<Boolean> convertMissingDimsFlags = Lists.newArrayListWithCapacity(mergedDimensions.size());
     writeDimValueAndSetupDimConversion(
-        adapters, progress, mergedDimensions, dimCardinalities, dimValueWriters, dimensionSkipFlag, dimConversions
+        adapters, progress, mergedDimensions, dimCardinalities, dimValueWriters, dimensionSkipFlag, dimConversions,
+        convertMissingDimsFlags, dimHasNullFlags
     );
     log.info("Completed dim conversions in %,d millis.", System.currentTimeMillis() - startTime);
 
     /************* Walk through data sets, merge them, and write merged columns *************/
     progress.progress();
     final Iterable<Rowboat> theRows = makeRowIterable(
-        adapters, mergedDimensions, mergedMetrics, dimConversions, dimCardinalities, rowMergerFn
+        adapters,
+        mergedDimensions,
+        mergedMetrics,
+        dimConversions,
+        convertMissingDimsFlags,
+        rowMergerFn
     );
     final LongColumnSerializer timeWriter = setupTimeWriter(ioPeon);
     final ArrayList<IndexedIntsWriter> dimWriters = setupDimensionWriters(
@@ -199,7 +202,7 @@ public class IndexMergerV9 extends IndexMerger
     }
     mergeIndexesAndWriteColumns(
         adapters, progress, theRows, timeWriter, dimWriters, metWriters,
-        dimensionSkipFlag, rowNumConversions, nullRowsList
+        dimensionSkipFlag, rowNumConversions, nullRowsList, dimHasNullFlags
     );
 
     /************ Create Inverted Indexes *************/
@@ -212,7 +215,7 @@ public class IndexMergerV9 extends IndexMerger
     );
     makeInvertedIndexes(
         adapters, progress, mergedDimensions, indexSpec, v9TmpDir, rowNumConversions,
-        nullRowsList, dimValueWriters, bitmapIndexWriters, spatialIndexWriters
+        nullRowsList, dimValueWriters, bitmapIndexWriters, spatialIndexWriters, dimConversions
     );
 
     /************ Finalize Build Columns *************/
@@ -491,7 +494,8 @@ public class IndexMergerV9 extends IndexMerger
       final ArrayList<MutableBitmap> nullRowsList,
       final ArrayList<GenericIndexedWriter<String>> dimValueWriters,
       final ArrayList<GenericIndexedWriter<ImmutableBitmap>> bitmapIndexWriters,
-      final ArrayList<ByteBufferWriter<ImmutableRTree>> spatialIndexWriters
+      final ArrayList<ByteBufferWriter<ImmutableRTree>> spatialIndexWriters,
+      final ArrayList<Map<String, IntBuffer>> dimConversions
   ) throws IOException
   {
     final String section = "build inverted index";
@@ -519,27 +523,25 @@ public class IndexMergerV9 extends IndexMerger
         tree = new RTree(2, new LinearGutmanSplitStrategy(0, 50, bitmapFactory), bitmapFactory);
       }
 
-      BitmapIndexSeeker[] bitmapIndexSeeker = new BitmapIndexSeeker[adapters.size()];
-      for (int j = 0; j < adapters.size(); j++) {
-        bitmapIndexSeeker[j] = adapters.get(j).getBitmapIndexSeeker(dimension);
-      }
+      IndexSeeker[] dictIdSeeker = toIndexSeekers(adapters, dimConversions, dimension);
 
       ImmutableBitmap nullRowBitmap = bitmapSerdeFactory.getBitmapFactory().makeImmutableBitmap(
           nullRowsList.get(dimIndex)
       );
-      if (Iterables.getFirst(dimVals, "") != null && !nullRowsList.get(dimIndex).isEmpty()) {
-        bitmapIndexWriters.get(dimIndex).write(nullRowBitmap);
-      }
 
-      for (String dimVal : IndexedIterable.create(dimVals)) {
+      //Iterate all dim values's dictionary id in ascending order which in line with dim values's compare result.
+      for (int dictId = 0; dictId < dimVals.size(); dictId++) {
         progress.progress();
         List<Iterable<Integer>> convertedInverteds = Lists.newArrayListWithCapacity(adapters.size());
         for (int j = 0; j < adapters.size(); ++j) {
-          convertedInverteds.add(
-              new ConvertingIndexedInts(
-                  bitmapIndexSeeker[j].seek(dimVal), rowNumConversions.get(j)
-              )
-          );
+          int seekedDictId = dictIdSeeker[j].seek(dictId);
+          if (seekedDictId != IndexSeeker.NOT_EXIST) {
+            convertedInverteds.add(
+                new ConvertingIndexedInts(
+                    adapters.get(j).getBitmapIndex(dimension, seekedDictId), rowNumConversions.get(j)
+                )
+            );
+          }
         }
 
         MutableBitmap bitset = bitmapSerdeFactory.getBitmapFactory().makeEmptyMutableBitmap();
@@ -553,19 +555,21 @@ public class IndexMergerV9 extends IndexMerger
         }
 
         ImmutableBitmap bitmapToWrite = bitmapSerdeFactory.getBitmapFactory().makeImmutableBitmap(bitset);
-        if (dimVal == null) {
-          bitmapIndexWriters.get(dimIndex).write(nullRowBitmap.union(bitmapToWrite));
-        } else {
-          bitmapIndexWriters.get(dimIndex).write(bitmapToWrite);
+        if ((dictId == 0) && (Iterables.getFirst(dimVals, "") == null)) {
+          bitmapToWrite = nullRowBitmap.union(bitmapToWrite);
         }
+        bitmapIndexWriters.get(dimIndex).write(bitmapToWrite);
 
-        if (spatialIndexWriter != null && dimVal != null) {
-          List<String> stringCoords = Lists.newArrayList(SPLITTER.split(dimVal));
-          float[] coords = new float[stringCoords.size()];
-          for (int j = 0; j < coords.length; j++) {
-            coords[j] = Float.valueOf(stringCoords.get(j));
+        if (spatialIndexWriter != null) {
+          String dimVal = dimVals.get(dictId);
+          if (dimVal != null) {
+            List<String> stringCoords = Lists.newArrayList(SPLITTER.split(dimVal));
+            float[] coords = new float[stringCoords.size()];
+            for (int j = 0; j < coords.length; j++) {
+              coords[j] = Float.valueOf(stringCoords.get(j));
+            }
+            tree.insert(coords, bitset);
           }
-          tree.insert(coords, bitset);
         }
       }
       if (spatialIndexWriter != null) {
@@ -636,7 +640,8 @@ public class IndexMergerV9 extends IndexMerger
       final ArrayList<GenericColumnSerializer> metWriters,
       final ArrayList<Boolean> dimensionSkipFlag,
       final List<IntBuffer> rowNumConversions,
-      final ArrayList<MutableBitmap> nullRowsList
+      final ArrayList<MutableBitmap> nullRowsList,
+      final ArrayList<Boolean> dimHasNullFlags
   ) throws IOException
   {
     final String section = "walk through and merge rows";
@@ -665,7 +670,11 @@ public class IndexMergerV9 extends IndexMerger
         if (dimensionSkipFlag.get(i)) {
           continue;
         }
-        if (dims[i] == null || dims[i].length == 0 || (dims[i].length == 1 && dims[i][0] == 0)) {
+        if (dims[i] == null || dims[i].length == 0) {
+          nullRowsList.get(i).add(rowCount);
+        } else if (dimHasNullFlags.get(i) && dims[i].length == 1 && dims[i][0] == 0) {
+          // If this dimension has the null/empty str in its dictionary, a row with a single-valued dimension
+          // that matches the null/empty str's dictionary ID should also be added to nullRowsList.
           nullRowsList.get(i).add(rowCount);
         }
         dimWriters.get(i).add(dims[i]);
@@ -773,77 +782,6 @@ public class IndexMergerV9 extends IndexMerger
     return dimWriters;
   }
 
-  private Iterable<Rowboat> makeRowIterable(
-      final List<IndexableAdapter> adapters,
-      final List<String> mergedDimensions,
-      final List<String> mergedMetrics,
-      final ArrayList<Map<String, IntBuffer>> dimConversions,
-      final Map<String, Integer> dimCardinalities,
-      final Function<ArrayList<Iterable<Rowboat>>, Iterable<Rowboat>> rowMergerFn
-  )
-  {
-    ArrayList<Iterable<Rowboat>> boats = Lists.newArrayListWithCapacity(adapters.size());
-
-    for (int i = 0; i < adapters.size(); ++i) {
-      final IndexableAdapter adapter = adapters.get(i);
-
-      final int[] dimLookup = new int[mergedDimensions.size()];
-      int count = 0;
-      for (String dim : adapter.getDimensionNames()) {
-        dimLookup[count] = mergedDimensions.indexOf(dim);
-        count++;
-      }
-
-      final int[] metricLookup = new int[mergedMetrics.size()];
-      count = 0;
-      for (String metric : adapter.getMetricNames()) {
-        metricLookup[count] = mergedMetrics.indexOf(metric);
-        count++;
-      }
-
-      boats.add(
-          new MMappedIndexRowIterable(
-              Iterables.transform(
-                  adapters.get(i).getRows(),
-                  new Function<Rowboat, Rowboat>()
-                  {
-                    @Override
-                    public Rowboat apply(Rowboat input)
-                    {
-                      int[][] newDims = new int[mergedDimensions.size()][];
-                      int j = 0;
-                      for (int[] dim : input.getDims()) {
-                        newDims[dimLookup[j]] = dim;
-                        j++;
-                      }
-
-                      Object[] newMetrics = new Object[mergedMetrics.size()];
-                      j = 0;
-                      for (Object met : input.getMetrics()) {
-                        newMetrics[metricLookup[j]] = met;
-                        j++;
-                      }
-
-                      return new Rowboat(
-                          input.getTimestamp(),
-                          newDims,
-                          newMetrics,
-                          input.getRowNum()
-                      );
-                    }
-                  }
-              ),
-              mergedDimensions,
-              dimConversions.get(i),
-              i,
-              dimCardinalities
-          )
-      );
-    }
-
-    return rowMergerFn.apply(boats);
-  }
-
   private ArrayList<GenericIndexedWriter<String>> setupDimValueWriters(
       final IOPeon ioPeon,
       final List<String> mergedDimensions
@@ -862,100 +800,87 @@ public class IndexMergerV9 extends IndexMerger
   }
 
   private void writeDimValueAndSetupDimConversion(
-      final List<IndexableAdapter> adapters,
+      final List<IndexableAdapter> indexes,
       final ProgressIndicator progress,
       final List<String> mergedDimensions,
       final Map<String, Integer> dimensionCardinalities,
       final ArrayList<GenericIndexedWriter<String>> dimValueWriters,
       final ArrayList<Boolean> dimensionSkipFlag,
-      final List<Map<String, IntBuffer>> dimConversions
+      final List<Map<String, IntBuffer>> dimConversions,
+      final ArrayList<Boolean> convertMissingDimsFlags,
+      final ArrayList<Boolean> dimHasNullFlags
   ) throws IOException
   {
     final String section = "setup dimension conversions";
     progress.startSection(section);
 
-    for (int i = 0; i < adapters.size(); ++i) {
+    for (int i = 0; i < indexes.size(); ++i) {
       dimConversions.add(Maps.<String, IntBuffer>newHashMap());
     }
 
     for (int dimIndex = 0; dimIndex < mergedDimensions.size(); ++dimIndex) {
       long dimStartTime = System.currentTimeMillis();
       String dimension = mergedDimensions.get(dimIndex);
-
-      // lookups for all dimension values of this dimension
-      List<Indexed<String>> dimValueLookups = Lists.newArrayListWithCapacity(adapters.size());
-
-      // each converter converts dim values of this dimension to global dictionary
-      DimValueConverter[] converters = new DimValueConverter[adapters.size()];
-
+      boolean dimHasNull = false;
       boolean dimHasValues = false;
-      boolean[] dimHasValuesByIndex = new boolean[adapters.size()];
-      for (int i = 0; i < adapters.size(); i++) {
-        Indexed<String> dimValues = adapters.get(i).getDimValueLookup(dimension);
+      boolean dimAbsentFromSomeIndex = false;
+
+      int numMergeIndex = 0;
+      Indexed<String> dimValueLookup = null;
+      Indexed<String>[] dimValueLookups = new Indexed[indexes.size() + 1];
+      for (int i = 0; i < indexes.size(); i++) {
+        Indexed<String> dimValues = indexes.get(i).getDimValueLookup(dimension);
         if (!isNullColumn(dimValues)) {
           dimHasValues = true;
-          dimHasValuesByIndex[i] = true;
-          dimValueLookups.add(dimValues);
-          converters[i] = new DimValueConverter(dimValues);
+          dimHasNull |= dimValues.indexOf(null) >= 0;
+          dimValueLookups[i] = dimValueLookup = dimValues;
+          numMergeIndex++;
         } else {
-          dimHasValuesByIndex[i] = false;
+          dimAbsentFromSomeIndex = true;
         }
       }
+
+      boolean convertMissingDims = dimHasValues && dimAbsentFromSomeIndex;
+      convertMissingDimsFlags.add(convertMissingDims);
 
       /*
-       * Ensure the empty str is always in the dictionary if column is not null across indexes
+       * Ensure the empty str is always in the dictionary if the dimension was missing from one index but
+       * has non-null values in another index.
        * This is done so that MMappedIndexRowIterable can convert null columns to empty strings
-       * later on, to allow rows from indexes with no values at all for a dimension to merge correctly with
-       * rows from indexes with partial null values for that dimension.
+       * later on, to allow rows from indexes without a particular dimension to merge correctly with
+       * rows from indexes with null/empty str values for that dimension.
        */
-      if (dimHasValues) {
-        dimValueLookups.add(EMPTY_STR_DIM_VAL);
-        for (int i = 0; i < adapters.size(); i++) {
-          if (!dimHasValuesByIndex[i]) {
-            converters[i] = new DimValueConverter(EMPTY_STR_DIM_VAL);
-          }
-        }
+      if (convertMissingDims && !dimHasNull) {
+        dimHasNull = true;
+        dimValueLookups[indexes.size()] = dimValueLookup = EMPTY_STR_DIM_VAL;
+        numMergeIndex++;
       }
-
-      // sort all dimension values and treat all null values as empty strings
-      Iterable<String> dimensionValues = CombiningIterable.createSplatted(
-          Iterables.transform(
-              dimValueLookups,
-              new Function<Indexed<String>, Iterable<String>>()
-              {
-                @Override
-                public Iterable<String> apply(@Nullable Indexed<String> indexed)
-                {
-                  return Iterables.transform(
-                      indexed,
-                      new Function<String, String>()
-                      {
-                        @Override
-                        public String apply(@Nullable String input)
-                        {
-                          return (input == null) ? "" : input;
-                        }
-                      }
-                  );
-                }
-              }
-          ), Ordering.<String>natural().nullsFirst()
-      );
 
       GenericIndexedWriter<String> writer = dimValueWriters.get(dimIndex);
-      int cardinality = 0;
-      for (String value : dimensionValues) {
-        value = value == null ? "" : value;
-        writer.write(value);
 
-        for (int i = 0; i < adapters.size(); i++) {
-          DimValueConverter converter = converters[i];
-          if (converter != null) {
-            converter.convert(value, cardinality);
+      int cardinality = 0;
+      if (numMergeIndex > 1) {
+        DictionaryMergeIterator iterator = new DictionaryMergeIterator(dimValueLookups, true);
+
+        while (iterator.hasNext()) {
+          writer.write(iterator.next());
+        }
+
+        for (int i = 0; i < indexes.size(); i++) {
+          if (dimValueLookups[i] != null && iterator.needConversion(i)) {
+            dimConversions.get(i).put(dimension, iterator.conversions[i]);
           }
         }
-        ++cardinality;
+        cardinality = iterator.counter;
+      } else if (numMergeIndex == 1) {
+        for (String value : dimValueLookup) {
+          writer.write(value);
+        }
+        cardinality = dimValueLookup.size();
       }
+
+      // Mark if this dim has the null/empty str value in its dictionary, used for determining nullRowsList later.
+      dimHasNullFlags.add(dimHasNull);
 
       log.info(
           "Completed dim[%s] conversions with cardinality[%,d] in %,d millis.",
@@ -972,14 +897,6 @@ public class IndexMergerV9 extends IndexMerger
         continue;
       }
       dimensionSkipFlag.add(false);
-
-      // make the conversion
-      for (int i = 0; i < adapters.size(); ++i) {
-        DimValueConverter converter = converters[i];
-        if (converter != null) {
-          dimConversions.get(i).put(dimension, converters[i].getConversionBuffer());
-        }
-      }
     }
     progress.stopSection(section);
   }

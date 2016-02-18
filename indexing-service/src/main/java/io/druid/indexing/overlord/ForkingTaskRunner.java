@@ -21,6 +21,9 @@ package io.druid.indexing.overlord;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Joiner;
@@ -45,6 +48,7 @@ import com.google.inject.Inject;
 import com.metamx.common.ISE;
 import com.metamx.common.Pair;
 import com.metamx.common.lifecycle.LifecycleStop;
+import com.metamx.common.logger.Logger;
 import com.metamx.emitter.EmittingLogger;
 import io.druid.concurrent.Execs;
 import io.druid.guice.annotations.Self;
@@ -52,6 +56,7 @@ import io.druid.indexing.common.TaskStatus;
 import io.druid.indexing.common.config.TaskConfig;
 import io.druid.indexing.common.task.Task;
 import io.druid.indexing.common.tasklogs.LogUtils;
+import io.druid.indexing.overlord.autoscaling.ScalingStats;
 import io.druid.indexing.overlord.config.ForkingTaskRunnerConfig;
 import io.druid.indexing.worker.config.WorkerConfig;
 import io.druid.query.DruidMetrics;
@@ -74,7 +79,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.Callable;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -243,7 +247,7 @@ public class ForkingTaskRunner implements TaskRunner, TaskLogStreamer
                               command.add("-cp");
                               command.add(taskClasspath);
 
-                              Iterables.addAll(command, new QuotableWhiteSpaceSplitter(config.getJavaOpts()));
+                              Iterables.addAll(command, new QuotableWhiteSpaceSplitter(config.getJavaOpts(), jsonMapper));
 
                               // Override task specific javaOpts
                               Object taskJavaOpts = task.getContextValue(
@@ -252,7 +256,7 @@ public class ForkingTaskRunner implements TaskRunner, TaskLogStreamer
                               if (taskJavaOpts != null) {
                                 Iterables.addAll(
                                     command,
-                                    new QuotableWhiteSpaceSplitter((String) taskJavaOpts)
+                                    new QuotableWhiteSpaceSplitter((String) taskJavaOpts, jsonMapper)
                                 );
                               }
 
@@ -321,6 +325,14 @@ public class ForkingTaskRunner implements TaskRunner, TaskLogStreamer
 
                               command.add(String.format("-Ddruid.host=%s", childHost));
                               command.add(String.format("-Ddruid.port=%d", childPort));
+                              /**
+                               * These are not enabled per default to allow the user to either set or not set them
+                               * Users are highly suggested to be set in druid.indexer.runner.javaOpts
+                               * See io.druid.concurrent.TaskThreadPriority#getThreadPriorityFromTaskPriority(int)
+                               * for more information
+                              command.add("-XX:+UseThreadPriorities");
+                              command.add("-XX:ThreadPriorityPolicy=42");
+                               */
 
                               if (config.isSeparateIngestionEndpoint()) {
                                 command.add(String.format(
@@ -542,9 +554,9 @@ public class ForkingTaskRunner implements TaskRunner, TaskLogStreamer
   }
 
   @Override
-  public Collection<ZkWorker> getWorkers()
+  public Optional<ScalingStats> getScalingStats()
   {
-    return ImmutableList.of();
+    return Optional.absent();
   }
 
   @Override
@@ -664,16 +676,31 @@ public class ForkingTaskRunner implements TaskRunner, TaskLogStreamer
  */
 class QuotableWhiteSpaceSplitter implements Iterable<String>
 {
+  private static final Logger LOG = new Logger(QuotableWhiteSpaceSplitter.class);
   private final String string;
+  private final ObjectMapper mapper;
 
-  public QuotableWhiteSpaceSplitter(String string)
+  public QuotableWhiteSpaceSplitter(String string, ObjectMapper jsonMapper)
   {
     this.string = Preconditions.checkNotNull(string);
+    this.mapper = jsonMapper;
   }
 
   @Override
   public Iterator<String> iterator()
   {
+    try (JsonParser parser = mapper.getFactory().createParser(string)) {
+      final JsonToken token = parser.nextToken();
+      if (JsonToken.START_ARRAY.equals(token)) {
+        return mapper.<List<String>>readValue(string, new TypeReference<List<String>>()
+        {
+        }).iterator();
+      }
+    }
+    catch (IOException e) {
+      LOG.debug(e, "Could not parse %s", string);
+    }
+    LOG.debug("Not json, hoping it is a good string : %s", string);
     return Splitter.on(
         new CharMatcher()
         {

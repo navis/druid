@@ -21,9 +21,9 @@ package io.druid.segment;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
-import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
+import com.google.common.base.Strings;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -31,6 +31,7 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
+import com.google.common.collect.PeekingIterator;
 import com.google.common.collect.Sets;
 import com.google.common.io.ByteStreams;
 import com.google.common.io.Files;
@@ -45,6 +46,7 @@ import com.metamx.collections.spatial.RTree;
 import com.metamx.collections.spatial.split.LinearGutmanSplitStrategy;
 import com.metamx.common.IAE;
 import com.metamx.common.ISE;
+import com.metamx.common.Pair;
 import com.metamx.common.guava.FunctionalIterable;
 import com.metamx.common.guava.MergeIterable;
 import com.metamx.common.guava.nary.BinaryFn;
@@ -56,7 +58,6 @@ import io.druid.common.guava.GuavaUtils;
 import io.druid.common.utils.JodaUtils;
 import io.druid.common.utils.SerializerUtils;
 import io.druid.query.aggregation.AggregatorFactory;
-import io.druid.segment.column.BitmapIndexSeeker;
 import io.druid.segment.column.ColumnCapabilities;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
@@ -93,9 +94,12 @@ import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -350,7 +354,6 @@ public class IndexMerger
                           }
                         }
                     )
-                    .concat(Arrays.<Iterable<String>>asList(new AggFactoryStringIndexed(metricAggs)))
             )
         ),
         new Function<String, String>()
@@ -362,14 +365,28 @@ public class IndexMerger
           }
         }
     );
-    if (mergedMetrics.size() != metricAggs.length) {
-      throw new IAE("Bad number of metrics[%d], expected [%d]", mergedMetrics.size(), metricAggs.length);
-    }
 
     final AggregatorFactory[] sortedMetricAggs = new AggregatorFactory[mergedMetrics.size()];
     for (int i = 0; i < metricAggs.length; i++) {
       AggregatorFactory metricAgg = metricAggs[i];
-      sortedMetricAggs[mergedMetrics.indexOf(metricAgg.getName())] = metricAgg;
+      int metricIndex = mergedMetrics.indexOf(metricAgg.getName());
+      /*
+        If metricIndex is negative, one of the metricAggs was not present in the union of metrics from the indices
+        we are merging
+       */
+      if (metricIndex > -1) {
+        sortedMetricAggs[metricIndex] = metricAgg;
+      }
+    }
+
+    /*
+      If there is nothing at sortedMetricAggs[i], then we did not have a metricAgg whose name matched the name
+      of the ith element of mergedMetrics. I.e. There was a metric in the indices to merge that we did not ask for.
+     */
+    for (int i = 0; i < sortedMetricAggs.length; i++) {
+      if (sortedMetricAggs[i] == null) {
+        throw new IAE("Indices to merge contained metric[%s], but requested metrics did not", mergedMetrics.get(i));
+      }
     }
 
     for (int i = 0; i < mergedMetrics.size(); i++) {
@@ -377,7 +394,7 @@ public class IndexMerger
         throw new IAE(
             "Metric mismatch, index[%d] [%s] != [%s]",
             i,
-            metricAggs[i].getName(),
+            sortedMetricAggs[i].getName(),
             mergedMetrics.get(i)
         );
       }
@@ -627,8 +644,9 @@ public class IndexMerger
     ArrayList<FileOutputSupplier> dimOuts = Lists.newArrayListWithCapacity(mergedDimensions.size());
     Map<String, Integer> dimensionCardinalities = Maps.newHashMap();
     ArrayList<Map<String, IntBuffer>> dimConversions = Lists.newArrayListWithCapacity(indexes.size());
+    final ArrayList<Boolean> convertMissingDimsFlags = Lists.newArrayListWithCapacity(mergedDimensions.size());
 
-    for (IndexableAdapter index : indexes) {
+    for (int i = 0; i < indexes.size(); ++i) {
       dimConversions.add(Maps.<String, IntBuffer>newHashMap());
     }
 
@@ -638,80 +656,62 @@ public class IndexMerger
       );
       writer.open();
 
-      List<Indexed<String>> dimValueLookups = Lists.newArrayListWithCapacity(indexes.size() + 1);
-      DimValueConverter[] converters = new DimValueConverter[indexes.size()];
+      boolean dimHasNull = false;
       boolean dimHasValues = false;
-      boolean[] dimHasValuesByIndex = new boolean[indexes.size()];
+      boolean dimAbsentFromSomeIndex = false;
 
+      int numMergeIndex = 0;
+      Indexed<String> dimValueLookup = null;
+      Indexed<String>[] dimValueLookups = new Indexed[indexes.size() + 1];
       for (int i = 0; i < indexes.size(); i++) {
         Indexed<String> dimValues = indexes.get(i).getDimValueLookup(dimension);
         if (!isNullColumn(dimValues)) {
           dimHasValues = true;
-          dimHasValuesByIndex[i] = true;
-          dimValueLookups.add(dimValues);
-          converters[i] = new DimValueConverter(dimValues);
+          dimHasNull |= dimValues.indexOf(null) >= 0;
+          dimValueLookups[i] = dimValueLookup = dimValues;
+          numMergeIndex++;
         } else {
-          dimHasValuesByIndex[i] = false;
+          dimAbsentFromSomeIndex = true;
         }
       }
+
+      boolean convertMissingDims = dimHasValues && dimAbsentFromSomeIndex;
+      convertMissingDimsFlags.add(convertMissingDims);
 
       /*
-       * Ensure the empty str is always in the dictionary if column is not null across indexes
+       * Ensure the empty str is always in the dictionary if the dimension was missing from one index but
+       * has non-null values in another index.
        * This is done so that MMappedIndexRowIterable can convert null columns to empty strings
-       * later on, to allow rows from indexes with no values at all for a dimension to merge correctly with
-       * rows from indexes with partial null values for that dimension.
+       * later on, to allow rows from indexes without a particular dimension to merge correctly with
+       * rows from indexes with null/empty str values for that dimension.
        */
-      if (dimHasValues) {
-        dimValueLookups.add(EMPTY_STR_DIM_VAL);
-        for (int i = 0; i < indexes.size(); i++) {
-          if (!dimHasValuesByIndex[i]) {
-            converters[i] = new DimValueConverter(EMPTY_STR_DIM_VAL);
-          }
-        }
+      if (convertMissingDims && !dimHasNull) {
+        dimValueLookups[indexes.size()] = dimValueLookup = EMPTY_STR_DIM_VAL;
+        numMergeIndex++;
       }
 
-      Iterable<String> dimensionValues = CombiningIterable.createSplatted(
-          Iterables.transform(
-              dimValueLookups,
-              new Function<Indexed<String>, Iterable<String>>()
-              {
-                @Override
-                public Iterable<String> apply(@Nullable Indexed<String> indexed)
-                {
-                  return Iterables.transform(
-                      indexed,
-                      new Function<String, String>()
-                      {
-                        @Override
-                        public String apply(@Nullable String input)
-                        {
-                          return (input == null) ? "" : input;
-                        }
-                      }
-                  );
-                }
-              }
-          )
-          ,
-          Ordering.<String>natural().nullsFirst()
-      );
+      int cardinality = 0;
+      if (numMergeIndex > 1) {
+        DictionaryMergeIterator iterator = new DictionaryMergeIterator(dimValueLookups, true);
 
-      int count = 0;
-      for (String value : dimensionValues) {
-        value = value == null ? "" : value;
-        writer.write(value);
-
-        for (int i = 0; i < indexes.size(); i++) {
-          DimValueConverter converter = converters[i];
-          if (converter != null) {
-            converter.convert(value, count);
-          }
+        while (iterator.hasNext()) {
+          writer.write(iterator.next());
         }
 
-        ++count;
+        for (int i = 0; i < indexes.size(); i++) {
+          if (dimValueLookups[i] != null && iterator.needConversion(i)) {
+            dimConversions.get(i).put(dimension, iterator.conversions[i]);
+          }
+        }
+        cardinality = iterator.counter;
+      } else if (numMergeIndex == 1) {
+        for (String value : dimValueLookup) {
+          writer.write(value);
+        }
+        cardinality = dimValueLookup.size();
       }
 
-      dimensionCardinalities.put(dimension, count);
+      dimensionCardinalities.put(dimension, cardinality);
 
       FileOutputSupplier dimOut = new FileOutputSupplier(IndexIO.makeDimFile(v8OutDir, dimension), true);
       dimOuts.add(dimOut);
@@ -719,12 +719,6 @@ public class IndexMerger
       writer.close();
       serializerUtils.writeString(dimOut, dimension);
       ByteStreams.copy(writer.combineStreams(), dimOut);
-      for (int i = 0; i < indexes.size(); ++i) {
-        DimValueConverter converter = converters[i];
-        if (converter != null) {
-          dimConversions.get(i).put(dimension, converters[i].getConversionBuffer());
-        }
-      }
 
       ioPeon.cleanup();
     }
@@ -734,64 +728,14 @@ public class IndexMerger
     progress.progress();
     startTime = System.currentTimeMillis();
 
-    ArrayList<Iterable<Rowboat>> boats = Lists.newArrayListWithCapacity(indexes.size());
-
-    for (int i = 0; i < indexes.size(); ++i) {
-      final IndexableAdapter adapter = indexes.get(i);
-
-      final int[] dimLookup = new int[mergedDimensions.size()];
-      int count = 0;
-      for (String dim : adapter.getDimensionNames()) {
-        dimLookup[count] = mergedDimensions.indexOf(dim);
-        count++;
-      }
-
-      final int[] metricLookup = new int[mergedMetrics.size()];
-      count = 0;
-      for (String metric : adapter.getMetricNames()) {
-        metricLookup[count] = mergedMetrics.indexOf(metric);
-        count++;
-      }
-
-      boats.add(
-          new MMappedIndexRowIterable(
-              Iterables.transform(
-                  indexes.get(i).getRows(),
-                  new Function<Rowboat, Rowboat>()
-                  {
-                    @Override
-                    public Rowboat apply(@Nullable Rowboat input)
-                    {
-                      int[][] newDims = new int[mergedDimensions.size()][];
-                      int j = 0;
-                      for (int[] dim : input.getDims()) {
-                        newDims[dimLookup[j]] = dim;
-                        j++;
-                      }
-
-                      Object[] newMetrics = new Object[mergedMetrics.size()];
-                      j = 0;
-                      for (Object met : input.getMetrics()) {
-                        newMetrics[metricLookup[j]] = met;
-                        j++;
-                      }
-
-                      return new Rowboat(
-                          input.getTimestamp(),
-                          newDims,
-                          newMetrics,
-                          input.getRowNum()
-                      );
-                    }
-                  }
-              ),
-              mergedDimensions, dimConversions.get(i), i,
-              dimensionCardinalities
-          )
-      );
-    }
-
-    Iterable<Rowboat> theRows = rowMergerFn.apply(boats);
+    Iterable<Rowboat> theRows = makeRowIterable(
+        indexes,
+        mergedDimensions,
+        mergedMetrics,
+        dimConversions,
+        convertMissingDimsFlags,
+        rowMergerFn
+    );
 
     CompressedLongsSupplierSerializer timeWriter = CompressedLongsSupplierSerializer.create(
         ioPeon, "little_end_time", IndexIO.BYTE_ORDER, CompressedObjectStrategy.DEFAULT_COMPRESSION_STRATEGY
@@ -950,19 +894,21 @@ public class IndexMerger
         tree = new RTree(2, new LinearGutmanSplitStrategy(0, 50, bitmapFactory), bitmapFactory);
       }
 
-      BitmapIndexSeeker[] bitmapIndexSeeker = new BitmapIndexSeeker[indexes.size()];
-      for (int j = 0; j < indexes.size(); j++) {
-        bitmapIndexSeeker[j] = indexes.get(j).getBitmapIndexSeeker(dimension);
-      }
-      for (String dimVal : IndexedIterable.create(dimVals)) {
+      IndexSeeker[] dictIdSeeker = toIndexSeekers(indexes, dimConversions, dimension);
+
+      //Iterate all dim values's dictionary id in ascending order which in line with dim values's compare result.
+      for (int dictId = 0; dictId < dimVals.size(); dictId++) {
         progress.progress();
         List<Iterable<Integer>> convertedInverteds = Lists.newArrayListWithCapacity(indexes.size());
         for (int j = 0; j < indexes.size(); ++j) {
-          convertedInverteds.add(
-              new ConvertingIndexedInts(
-                  bitmapIndexSeeker[j].seek(dimVal), rowNumConversions.get(j)
-              )
-          );
+          int seekedDictId = dictIdSeeker[j].seek(dictId);
+          if (seekedDictId != IndexSeeker.NOT_EXIST) {
+            convertedInverteds.add(
+                new ConvertingIndexedInts(
+                    indexes.get(j).getBitmapIndex(dimension, seekedDictId), rowNumConversions.get(j)
+                )
+            );
+          }
         }
 
         MutableBitmap bitset = bitmapSerdeFactory.getBitmapFactory().makeEmptyMutableBitmap();
@@ -979,13 +925,16 @@ public class IndexMerger
             bitmapSerdeFactory.getBitmapFactory().makeImmutableBitmap(bitset)
         );
 
-        if (isSpatialDim && dimVal != null) {
-          List<String> stringCoords = Lists.newArrayList(SPLITTER.split(dimVal));
-          float[] coords = new float[stringCoords.size()];
-          for (int j = 0; j < coords.length; j++) {
-            coords[j] = Float.valueOf(stringCoords.get(j));
+        if (isSpatialDim) {
+          String dimVal = dimVals.get(dictId);
+          if (dimVal != null) {
+            List<String> stringCoords = Lists.newArrayList(SPLITTER.split(dimVal));
+            float[] coords = new float[stringCoords.size()];
+            for (int j = 0; j < coords.length; j++) {
+              coords[j] = Float.valueOf(stringCoords.get(j));
+            }
+            tree.insert(coords, bitset);
           }
-          tree.insert(coords, bitset);
         }
       }
       writer.close();
@@ -1063,6 +1012,98 @@ public class IndexMerger
     return outDir;
   }
 
+  protected Iterable<Rowboat> makeRowIterable(
+      List<IndexableAdapter> indexes,
+      final List<String> mergedDimensions,
+      final List<String> mergedMetrics,
+      ArrayList<Map<String, IntBuffer>> dimConversions,
+      ArrayList<Boolean> convertMissingDimsFlags,
+      Function<ArrayList<Iterable<Rowboat>>, Iterable<Rowboat>> rowMergerFn
+  )
+  {
+    ArrayList<Iterable<Rowboat>> boats = Lists.newArrayListWithCapacity(indexes.size());
+
+    for (int i = 0; i < indexes.size(); ++i) {
+      final IndexableAdapter adapter = indexes.get(i);
+
+      final int[] dimLookup = toLookupMap(adapter.getDimensionNames(), mergedDimensions);
+      final int[] metricLookup = toLookupMap(adapter.getMetricNames(), mergedMetrics);
+
+      Iterable<Rowboat> target = indexes.get(i).getRows();
+      if (dimLookup != null || metricLookup != null) {
+        // resize/reorder index table if needed
+        target = Iterables.transform(
+            target,
+            new Function<Rowboat, Rowboat>()
+            {
+              @Override
+              public Rowboat apply(Rowboat input)
+              {
+                int[][] newDims = input.getDims();
+                if (dimLookup != null) {
+                  newDims = new int[mergedDimensions.size()][];
+                  int j = 0;
+                  for (int[] dim : input.getDims()) {
+                    newDims[dimLookup[j]] = dim;
+                    j++;
+                  }
+                }
+
+                Object[] newMetrics = input.getMetrics();
+                if (metricLookup != null) {
+                  newMetrics = new Object[mergedMetrics.size()];
+                  int j = 0;
+                  for (Object met : input.getMetrics()) {
+                    newMetrics[metricLookup[j]] = met;
+                    j++;
+                  }
+                }
+
+                return new Rowboat(
+                    input.getTimestamp(),
+                    newDims,
+                    newMetrics,
+                    input.getRowNum()
+                );
+              }
+            }
+        );
+      }
+      boats.add(
+          new MMappedIndexRowIterable(
+              target, mergedDimensions, dimConversions.get(i), i, convertMissingDimsFlags
+          )
+      );
+    }
+
+    return rowMergerFn.apply(boats);
+  }
+
+  private int[] toLookupMap(Indexed<String> indexed, List<String> values)
+  {
+    if (isSame(indexed, values)) {
+      return null;  // no need to convert
+    }
+    int[] dimLookup = new int[values.size()];
+    for (int i = 0; i < indexed.size(); i++) {
+      dimLookup[i] = values.indexOf(indexed.get(i));
+    }
+    return dimLookup;
+  }
+
+  private boolean isSame(Indexed<String> indexed, List<String> values)
+  {
+    if (indexed.size() != values.size()) {
+      return false;
+    }
+    for (int i = 0; i < indexed.size(); i++) {
+      if (!indexed.get(i).equals(values.get(i))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   public static <T extends Comparable> ArrayList<T> mergeIndexed(final List<Iterable<T>> indexedLists)
   {
     Set<T> retVal = Sets.newTreeSet(Ordering.<T>natural().nullsFirst());
@@ -1102,74 +1143,101 @@ public class IndexMerger
     IndexIO.checkFileSize(indexFile);
   }
 
-  public static class DimValueConverter
+  protected IndexSeeker[] toIndexSeekers(
+      List<IndexableAdapter> adapters,
+      ArrayList<Map<String, IntBuffer>> dimConversions,
+      String dimension
+  )
   {
-    private final Indexed<String> dimSet;
-    private final IntBuffer conversionBuf;
+    IndexSeeker[] seekers = new IndexSeeker[adapters.size()];
+    for (int i = 0; i < adapters.size(); i++) {
+      IntBuffer dimConversion = dimConversions.get(i).get(dimension);
+      if (dimConversion != null) {
+        seekers[i] = new IndexSeekerWithConversion((IntBuffer) dimConversion.asReadOnlyBuffer().rewind());
+      } else {
+        Indexed<String> dimValueLookup = adapters.get(i).getDimValueLookup(dimension);
+        seekers[i] = new IndexSeekerWithoutConversion(dimValueLookup == null ? 0 : dimValueLookup.size());
+      }
+    }
+    return seekers;
+  }
 
+  static interface IndexSeeker
+  {
+    int NOT_EXIST = -1;
+    int NOT_INIT = -1;
+
+    int seek(int dictId);
+  }
+
+  static class IndexSeekerWithoutConversion implements IndexSeeker
+  {
+    private final int limit;
+
+    public IndexSeekerWithoutConversion(int limit)
+    {
+      this.limit = limit;
+    }
+
+    @Override
+    public int seek(int dictId)
+    {
+      return dictId < limit ? dictId : NOT_EXIST;
+    }
+  }
+
+  /**
+   * Get old dictId from new dictId, and only support access in order
+   */
+  static class IndexSeekerWithConversion implements IndexSeeker
+  {
+    private final IntBuffer dimConversions;
     private int currIndex;
-    private String lastVal = null;
-    private String currValue;
+    private int currVal;
+    private int lastVal;
 
-    DimValueConverter(
-        Indexed<String> dimSet
-    )
+    IndexSeekerWithConversion(IntBuffer dimConversions)
     {
-      this.dimSet = dimSet;
-      conversionBuf = ByteBuffer.allocateDirect(dimSet.size() * Ints.BYTES).asIntBuffer();
-
-      currIndex = 0;
-      currValue = null;
+      this.dimConversions = dimConversions;
+      this.currIndex = 0;
+      this.currVal = NOT_INIT;
+      this.lastVal = NOT_INIT;
     }
 
-    public void convert(String value, int index)
+    public int seek(int dictId)
     {
-      if (dimSet.size() == 0) {
-        return;
+      if (dimConversions == null) {
+        return NOT_EXIST;
       }
-      if (lastVal != null) {
-        if (value.compareTo(lastVal) <= 0) {
-          throw new ISE("Value[%s] is less than the last value[%s] I have, cannot be.", value, lastVal);
+      if (lastVal != NOT_INIT) {
+        if (dictId <= lastVal) {
+          throw new ISE(
+              "Value dictId[%d] is less than the last value dictId[%d] I have, cannot be.",
+              dictId, lastVal
+          );
         }
-        return;
+        return NOT_EXIST;
       }
-      if (currValue == null) {
-        currValue = dimSet.get(currIndex);
+      if (currVal == NOT_INIT) {
+        currVal = dimConversions.get();
       }
-
-      while (currValue == null) {
-        conversionBuf.position(conversionBuf.position() + 1);
+      if (currVal == dictId) {
+        int ret = currIndex;
         ++currIndex;
-        if (currIndex == dimSet.size()) {
-          lastVal = value;
-          return;
-        }
-        currValue = dimSet.get(currIndex);
-      }
-
-      if (Objects.equal(currValue, value)) {
-        conversionBuf.put(index);
-        ++currIndex;
-        if (currIndex == dimSet.size()) {
-          lastVal = value;
+        if (dimConversions.hasRemaining()) {
+          currVal = dimConversions.get();
         } else {
-          currValue = dimSet.get(currIndex);
+          lastVal = dictId;
         }
-      } else if (currValue.compareTo(value) < 0) {
+        return ret;
+      } else if (currVal < dictId) {
         throw new ISE(
-            "Skipped currValue[%s], currIndex[%,d]; incoming value[%s], index[%,d]", currValue, currIndex, value, index
+            "Skipped currValue dictId[%d], currIndex[%d]; incoming value dictId[%d]",
+            currVal, currIndex, dictId
         );
+      } else {
+        return NOT_EXIST;
       }
-    }
-
-    public IntBuffer getConversionBuffer()
-    {
-      if (currIndex != conversionBuf.limit() || conversionBuf.hasRemaining()) {
-        throw new ISE(
-            "Asked for incomplete buffer.  currIndex[%,d] != buf.limit[%,d]", currIndex, conversionBuf.limit()
-        );
-      }
-      return (IntBuffer) conversionBuf.asReadOnlyBuffer().rewind();
     }
   }
 
@@ -1220,7 +1288,7 @@ public class IndexMerger
     private final List<String> convertedDims;
     private final Map<String, IntBuffer> converters;
     private final int indexNumber;
-    private final Map<String, Integer> dimCardinalities;
+    private final ArrayList<Boolean> convertMissingDimsFlags;
     private static final int[] EMPTY_STR_DIM = new int[]{0};
 
     MMappedIndexRowIterable(
@@ -1228,14 +1296,14 @@ public class IndexMerger
         List<String> convertedDims,
         Map<String, IntBuffer> converters,
         int indexNumber,
-        Map<String, Integer> dimCardinalities
+        ArrayList<Boolean> convertMissingDimsFlags
     )
     {
       this.index = index;
       this.convertedDims = convertedDims;
       this.converters = converters;
       this.indexNumber = indexNumber;
-      this.dimCardinalities = dimCardinalities;
+      this.convertMissingDimsFlags = convertMissingDimsFlags;
     }
 
     public Iterable<Rowboat> getIndex()
@@ -1269,29 +1337,23 @@ public class IndexMerger
               int[][] newDims = new int[convertedDims.size()][];
               for (int i = 0; i < convertedDims.size(); ++i) {
                 IntBuffer converter = converterArray[i];
-                String dimName = convertedDims.get(i);
-
-                if (converter == null) {
-                  continue;
-                }
-
                 if (i >= dims.length) {
                   continue;
                 }
 
-                if (dims[i] == null) {
-                  if (dimCardinalities.get(dimName) > 0) {
-                    newDims[i] = EMPTY_STR_DIM;
-                  }
+                if (dims[i] == null && convertMissingDimsFlags.get(i)) {
+                  newDims[i] = EMPTY_STR_DIM;
+                  continue;
+                }
+
+                if (converter == null) {
+                  newDims[i] = dims[i];
                   continue;
                 }
 
                 newDims[i] = new int[dims[i].length];
 
                 for (int j = 0; j < dims[i].length; ++j) {
-                  if (!converter.hasRemaining()) {
-                    log.error("Converter mismatch! wtfbbq!");
-                  }
                   newDims[i][j] = converter.get(dims[i][j]);
                 }
               }
@@ -1419,5 +1481,110 @@ public class IndexMerger
       }
     }
     IndexIO.checkFileSize(metadataFile);
+  }
+
+  static class DictionaryMergeIterator implements Iterator<String>
+  {
+    protected final IntBuffer[] conversions;
+    protected final PriorityQueue<Pair<Integer, PeekingIterator<String>>> pQueue;
+
+    protected int counter;
+
+    DictionaryMergeIterator(Indexed<String>[] dimValueLookups, boolean useDirect)
+    {
+      pQueue = new PriorityQueue<>(
+          dimValueLookups.length,
+          new Comparator<Pair<Integer, PeekingIterator<String>>>()
+          {
+            @Override
+            public int compare(Pair<Integer, PeekingIterator<String>> lhs, Pair<Integer, PeekingIterator<String>> rhs)
+            {
+              return lhs.rhs.peek().compareTo(rhs.rhs.peek());
+            }
+          }
+      );
+      conversions = new IntBuffer[dimValueLookups.length];
+      for (int i = 0; i < conversions.length; i++) {
+        if (dimValueLookups[i] == null) {
+          continue;
+        }
+        Indexed<String> indexed = dimValueLookups[i];
+        if (useDirect) {
+          conversions[i] = ByteBuffer.allocateDirect(indexed.size() * Ints.BYTES).asIntBuffer();
+        } else {
+          conversions[i] = IntBuffer.allocate(indexed.size());
+        }
+
+        final PeekingIterator<String> iter = Iterators.peekingIterator(
+            Iterators.transform(
+                indexed.iterator(),
+                new Function<String, String>()
+                {
+                  @Override
+                  public String apply(@Nullable String input)
+                  {
+                    return Strings.nullToEmpty(input);
+                  }
+                }
+            )
+        );
+        if (iter.hasNext()) {
+          pQueue.add(Pair.of(i, iter));
+        }
+      }
+    }
+
+    @Override
+    public boolean hasNext()
+    {
+      return !pQueue.isEmpty();
+    }
+
+    @Override
+    public String next()
+    {
+      Pair<Integer, PeekingIterator<String>> smallest = pQueue.remove();
+      if (smallest == null) {
+        throw new NoSuchElementException();
+      }
+      final String value = writeTranslate(smallest, counter);
+
+      while (!pQueue.isEmpty() && value.equals(pQueue.peek().rhs.peek())) {
+        writeTranslate(pQueue.remove(), counter);
+      }
+      counter++;
+
+      return value;
+    }
+
+    boolean needConversion(int index)
+    {
+      IntBuffer readOnly = conversions[index].asReadOnlyBuffer();
+      readOnly.rewind();
+      for (int i = 0; readOnly.hasRemaining(); i++) {
+        if (i != readOnly.get()) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    private String writeTranslate(Pair<Integer, PeekingIterator<String>> smallest, int counter)
+    {
+      final int index = smallest.lhs;
+      final String value = smallest.rhs.next();
+
+      conversions[index].put(counter);
+      if (smallest.rhs.hasNext()) {
+        pQueue.add(smallest);
+      }
+      return value;
+    }
+
+    @Override
+    public void remove()
+    {
+      throw new UnsupportedOperationException("remove");
+    }
   }
 }

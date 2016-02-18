@@ -539,10 +539,7 @@ public class HadoopConverterJob
           JobHelper.makeSegmentOutputPath(
               baseOutputPath,
               outputFS,
-              finalSegmentTemplate.getDataSource(),
-              finalSegmentTemplate.getVersion(),
-              finalSegmentTemplate.getInterval(),
-              finalSegmentTemplate.getShardSpec().getPartitionNum()
+              finalSegmentTemplate
           )
       );
       context.progress();
@@ -593,7 +590,7 @@ public class HadoopConverterJob
             @Override
             public InputSplit apply(DataSegment input)
             {
-              return new DatasourceInputSplit(ImmutableList.of(WindowedDataSegment.of(input)));
+              return new DatasourceInputSplit(ImmutableList.of(WindowedDataSegment.of(input)), null);
             }
           }
       );

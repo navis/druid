@@ -938,6 +938,7 @@ public class Druids
     private ColumnIncluderator toInclude;
     private EnumSet<SegmentMetadataQuery.AnalysisType> analysisTypes;
     private Boolean merge;
+    private Boolean lenientAggregatorMerge;
     private Map<String, Object> context;
 
     public SegmentMetadataQueryBuilder()
@@ -948,6 +949,7 @@ public class Druids
       analysisTypes = null;
       merge = null;
       context = null;
+      lenientAggregatorMerge = null;
     }
 
     public SegmentMetadataQuery build()
@@ -959,7 +961,8 @@ public class Druids
           merge,
           context,
           analysisTypes,
-          false
+          false,
+          lenientAggregatorMerge
       );
     }
 
@@ -975,6 +978,7 @@ public class Druids
           .toInclude(toInclude)
           .analysisTypes(analysisTypesArray)
           .merge(merge)
+          .lenientAggregatorMerge(lenientAggregatorMerge)
           .context(builder.context);
     }
 
@@ -1032,6 +1036,12 @@ public class Druids
       return this;
     }
 
+    public SegmentMetadataQueryBuilder lenientAggregatorMerge(boolean lenientAggregatorMerge)
+    {
+      this.lenientAggregatorMerge = lenientAggregatorMerge;
+      return this;
+    }
+
     public SegmentMetadataQueryBuilder context(Map<String, Object> c)
     {
       context = c;
@@ -1063,10 +1073,11 @@ public class Druids
   {
     private DataSource dataSource;
     private QuerySegmentSpec querySegmentSpec;
+    private boolean descending;
     private Map<String, Object> context;
     private DimFilter dimFilter;
     private QueryGranularity granularity;
-    private List<String> dimensions;
+    private List<DimensionSpec> dimensions;
     private List<String> metrics;
     private PagingSpec pagingSpec;
 
@@ -1087,11 +1098,10 @@ public class Druids
       return new SelectQuery(
           dataSource,
           querySegmentSpec,
+          descending,
           dimFilter,
           granularity,
-          dimensions,
-          metrics,
-          pagingSpec,
+          dimensions, metrics, pagingSpec,
           context
       );
     }
@@ -1131,6 +1141,12 @@ public class Druids
     public SelectQueryBuilder intervals(List<Interval> l)
     {
       querySegmentSpec = new LegacySegmentSpec(l);
+      return this;
+    }
+
+    public SelectQueryBuilder descending(boolean descending)
+    {
+      this.descending = descending;
       return this;
     }
 
@@ -1174,9 +1190,15 @@ public class Druids
       return this;
     }
 
-    public SelectQueryBuilder dimensions(List<String> d)
+    public SelectQueryBuilder dimensionSpecs(List<DimensionSpec> d)
     {
       dimensions = d;
+      return this;
+    }
+
+    public SelectQueryBuilder dimensions(List<String> d)
+    {
+      dimensions = DefaultDimensionSpec.toSpec(d);
       return this;
     }
 

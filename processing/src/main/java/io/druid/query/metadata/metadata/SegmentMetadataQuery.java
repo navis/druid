@@ -38,6 +38,7 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
 {
@@ -51,7 +52,9 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
   {
     CARDINALITY,
     SIZE,
-    INTERVAL;
+    INTERVAL,
+    AGGREGATORS,
+    MINMAX;
 
     @JsonValue
     @Override
@@ -79,13 +82,15 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
   public static final EnumSet<AnalysisType> DEFAULT_ANALYSIS_TYPES = EnumSet.of(
       AnalysisType.CARDINALITY,
       AnalysisType.SIZE,
-      AnalysisType.INTERVAL
+      AnalysisType.INTERVAL,
+      AnalysisType.MINMAX
   );
 
   private final ColumnIncluderator toInclude;
   private final boolean merge;
   private final boolean usingDefaultInterval;
   private final EnumSet<AnalysisType> analysisTypes;
+  private final boolean lenientAggregatorMerge;
 
   @JsonCreator
   public SegmentMetadataQuery(
@@ -95,7 +100,8 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
       @JsonProperty("merge") Boolean merge,
       @JsonProperty("context") Map<String, Object> context,
       @JsonProperty("analysisTypes") EnumSet<AnalysisType> analysisTypes,
-      @JsonProperty("usingDefaultInterval") Boolean useDefaultInterval
+      @JsonProperty("usingDefaultInterval") Boolean useDefaultInterval,
+      @JsonProperty("lenientAggregatorMerge") Boolean lenientAggregatorMerge
   )
   {
     super(
@@ -118,6 +124,7 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
         dataSource instanceof TableDataSource,
         "SegmentMetadataQuery only supports table datasource"
     );
+    this.lenientAggregatorMerge = lenientAggregatorMerge == null ? false : lenientAggregatorMerge;
   }
 
   @JsonProperty
@@ -151,24 +158,30 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
   }
 
   @JsonProperty
-  public EnumSet getAnalysisTypes()
+  public EnumSet<AnalysisType> getAnalysisTypes()
   {
     return analysisTypes;
   }
 
-  public boolean hasCardinality()
+  @JsonProperty
+  public boolean isLenientAggregatorMerge()
   {
-    return analysisTypes.contains(AnalysisType.CARDINALITY);
+    return lenientAggregatorMerge;
   }
 
-  public boolean hasSize()
-  {
-    return analysisTypes.contains(AnalysisType.SIZE);
-  }
-
-  public boolean hasInterval()
+  public boolean analyzingInterval()
   {
     return analysisTypes.contains(AnalysisType.INTERVAL);
+  }
+
+  public boolean hasAggregators()
+  {
+    return analysisTypes.contains(AnalysisType.AGGREGATORS);
+  }
+
+  public boolean hasMinMax()
+  {
+    return analysisTypes.contains(AnalysisType.MINMAX);
   }
 
   public byte[] getAnalysisTypesCacheKey()
@@ -201,7 +214,8 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
         merge,
         computeOverridenContext(contextOverride),
         analysisTypes,
-        usingDefaultInterval
+        usingDefaultInterval,
+        lenientAggregatorMerge
     );
   }
 
@@ -215,7 +229,8 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
         merge,
         getContext(),
         analysisTypes,
-        usingDefaultInterval
+        usingDefaultInterval,
+        lenientAggregatorMerge
     );
   }
 
@@ -229,7 +244,22 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
         merge,
         getContext(),
         analysisTypes,
-        usingDefaultInterval
+        usingDefaultInterval,
+        lenientAggregatorMerge
+    );
+  }
+
+  public Query<SegmentAnalysis> withColumns(ColumnIncluderator includerator)
+  {
+    return new SegmentMetadataQuery(
+        getDataSource(),
+        getQuerySegmentSpec(),
+        includerator,
+        merge,
+        getContext(),
+        analysisTypes,
+        usingDefaultInterval,
+        lenientAggregatorMerge
     );
   }
 
@@ -243,6 +273,7 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
            ", merge=" + merge +
            ", usingDefaultInterval=" + usingDefaultInterval +
            ", analysisTypes=" + analysisTypes +
+           ", lenientAggregatorMerge=" + lenientAggregatorMerge +
            '}';
   }
 
@@ -258,31 +289,24 @@ public class SegmentMetadataQuery extends BaseQuery<SegmentAnalysis>
     if (!super.equals(o)) {
       return false;
     }
-
     SegmentMetadataQuery that = (SegmentMetadataQuery) o;
-
-    if (merge != that.merge) {
-      return false;
-    }
-    if (usingDefaultInterval != that.usingDefaultInterval) {
-      return false;
-    }
-
-    if (!analysisTypes.equals(that.analysisTypes)) {
-      return false;
-    }
-    return !(toInclude != null ? !toInclude.equals(that.toInclude) : that.toInclude != null);
-
+    return merge == that.merge &&
+           usingDefaultInterval == that.usingDefaultInterval &&
+           lenientAggregatorMerge == that.lenientAggregatorMerge &&
+           Objects.equals(toInclude, that.toInclude) &&
+           Objects.equals(analysisTypes, that.analysisTypes);
   }
 
   @Override
   public int hashCode()
   {
-    int result = super.hashCode();
-    result = 31 * result + (toInclude != null ? toInclude.hashCode() : 0);
-    result = 31 * result + (merge ? 1 : 0);
-    result = 31 * result + (usingDefaultInterval ? 1 : 0);
-    result = 31 * result + analysisTypes.hashCode();
-    return result;
+    return Objects.hash(
+        super.hashCode(),
+        toInclude,
+        merge,
+        usingDefaultInterval,
+        analysisTypes,
+        lenientAggregatorMerge
+    );
   }
 }

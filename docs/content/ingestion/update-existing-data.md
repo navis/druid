@@ -55,6 +55,7 @@ Here is what goes inside `ingestionSpec`:
 |filter|JSON|See [Filters](../querying/filters.html)|no|
 |dimensions|Array of String|Name of dimension columns to load. By default, the list will be constructed from parseSpec. If parseSpec does not have an explicit list of dimensions then all the dimension columns present in stored data will be read.|no|
 |metrics|Array of String|Name of metric columns to load. By default, the list will be constructed from the "name" of all the configured aggregators.|no|
+|ignoreWhenNoSegments|boolean|Whether to ignore this ingestionSpec if no segments were found. Default behavior is to throw error when no segments were found.|no|
 
 For example
 
@@ -108,7 +109,7 @@ For example:
 
 ### Reindexing without Hadoop Batch Ingestion
 
-This section assumes the reader understands how to do batch ingestion without Hadoop using the [IndexTask](../misc/tasks.html#index-task),  
+This section assumes the reader understands how to do batch ingestion without Hadoop using the [IndexTask](../ingestion/tasks.html#index-task),  
 which uses a "firehose" to know where and how to read the input data. [IngestSegmentFirehose](firehose.html#ingestsegmentfirehose) 
 can be used to read data from segments inside Druid. Note that IndexTask is to be used for prototyping purposes only as 
 it has to do all processing inside a single process and can't scale. Please use Hadoop batch ingestion for production 
