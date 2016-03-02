@@ -1101,7 +1101,9 @@ public class Druids
           descending,
           dimFilter,
           granularity,
-          dimensions, metrics, pagingSpec,
+          dimensions,
+          metrics,
+          pagingSpec,
           context
       );
     }

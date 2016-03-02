@@ -110,7 +110,8 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
         return new SelectBinaryFn(
             query.getGranularity(),
             query.getPagingSpec(),
-            query.isDescending()
+            query.isDescending(),
+            query.isCursorForNext()
         );
       }
     };

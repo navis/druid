@@ -122,6 +122,11 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     return metrics;
   }
 
+  public boolean isCursorForNext()
+  {
+    return pagingSpec.isCursorForNext();
+  }
+
   public PagingOffset getPagingOffset(String identifier)
   {
     return pagingSpec.getOffset(identifier, isDescending());

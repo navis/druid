@@ -29,8 +29,8 @@ import io.druid.query.Result;
 import org.joda.time.DateTime;
 
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Queue;
 
 /**
@@ -61,7 +61,7 @@ public class SelectResultValueBuilder
   protected final boolean descending;
 
   protected final Queue<EventHolder> pQueue;
-  protected final Map<String, Integer> pagingIdentifiers;
+  protected final LinkedHashMap<String, Integer> pagingIdentifiers;
 
   public SelectResultValueBuilder(DateTime timestamp, PagingSpec pagingSpec, boolean descending)
   {
@@ -102,9 +102,12 @@ public class SelectResultValueBuilder
 
   public static class MergeBuilder extends SelectResultValueBuilder
   {
-    public MergeBuilder(DateTime timestamp, PagingSpec pagingSpec, boolean descending)
+    private final boolean cursorForNext;
+
+    public MergeBuilder(DateTime timestamp, PagingSpec pagingSpec, boolean descending, boolean cursorForNext)
     {
       super(timestamp, pagingSpec, descending);
+      this.cursorForNext = cursorForNext;
     }
 
     @Override
@@ -124,6 +127,9 @@ public class SelectResultValueBuilder
         EventHolder event = pQueue.remove();
         pagingIdentifiers.put(event.getSegmentId(), event.getOffset());
         values.add(event);
+      }
+      if (cursorForNext) {
+        PagingSpec.next(pagingIdentifiers, descending);   // to next offset
       }
       return values;
     }

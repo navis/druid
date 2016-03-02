@@ -28,6 +28,7 @@ import com.google.common.collect.ObjectArrays;
 import com.metamx.common.ISE;
 import com.metamx.common.guava.Sequences;
 import io.druid.jackson.DefaultObjectMapper;
+import io.druid.query.Druids;
 import io.druid.query.QueryRunner;
 import io.druid.query.QueryRunnerTestHelper;
 import io.druid.query.Result;
@@ -99,7 +100,7 @@ public class SelectQueryRunnerTest
   );
   public static final String[] V_0112_0114 = ObjectArrays.concat(V_0112, V_0113, String.class);
 
-  @Parameterized.Parameters(name = "{0}:descending={1}")
+  @Parameterized.Parameters(name = "{0}:descending={1}:cursorForNext={2}")
   public static Iterable<Object[]> constructorFeeder() throws IOException
   {
     return QueryRunnerTestHelper.cartesian(
@@ -113,33 +114,40 @@ public class SelectQueryRunnerTest
                 QueryRunnerTestHelper.NOOP_QUERYWATCHER
             )
         ),
+        Arrays.asList(false, true),
         Arrays.asList(false, true)
     );
   }
 
   private final QueryRunner runner;
   private final boolean descending;
+  private final boolean cursorForNext;
 
-  public SelectQueryRunnerTest(QueryRunner runner, boolean descending)
+  public SelectQueryRunnerTest(QueryRunner runner, boolean descending, boolean cursorForNext)
   {
     this.runner = runner;
     this.descending = descending;
+    this.cursorForNext = cursorForNext;
+  }
+
+  private Druids.SelectQueryBuilder newTestQuery() {
+    return Druids.newSelectQueryBuilder()
+                 .dataSource(new TableDataSource(QueryRunnerTestHelper.dataSource))
+                 .dimensionSpecs(DefaultDimensionSpec.toSpec(Arrays.<String>asList()))
+                 .metrics(Arrays.<String>asList())
+                 .intervals(QueryRunnerTestHelper.fullOnInterval)
+                 .granularity(QueryRunnerTestHelper.allGran)
+                 .descending(descending);
   }
 
   @Test
   public void testFullOnSelect()
   {
-    SelectQuery query = new SelectQuery(
-        new TableDataSource(QueryRunnerTestHelper.dataSource),
-        I_0112_0114,
-        descending,
-        null,
-        QueryRunnerTestHelper.allGran,
-        DefaultDimensionSpec.toSpec(Arrays.<String>asList()),
-        Arrays.<String>asList(),
-        new PagingSpec(null, 3),
-        null
-    );
+    SelectQuery query = newTestQuery()
+        .intervals(I_0112_0114)
+        .pagingSpec(PagingSpec.newSpec(3, cursorForNext))
+        .build();
+
     HashMap<String, Object> context = new HashMap<String, Object>();
     Iterable<Result<SelectResultValue>> results = Sequences.toList(
         runner.run(query, context),
@@ -150,7 +158,8 @@ public class SelectQueryRunnerTest
     List<Result<SelectResultValue>> expectedResults = toExpected(
         toEvents(new String[]{EventHolder.timestampKey + ":TIME"}, V_0112_0114),
         offset.startOffset(),
-        offset.threshold()
+        offset.threshold(),
+        cursorForNext
     );
     verify(expectedResults, results);
   }
@@ -169,23 +178,21 @@ public class SelectQueryRunnerTest
     map.put("technology", "technology0");
     map.put("travel", "travel0");
 
-    SelectQuery query = new SelectQuery(
-        new TableDataSource(QueryRunnerTestHelper.dataSource),
-        QueryRunnerTestHelper.fullOnInterval,
-        descending,
-        null,
-        QueryRunnerTestHelper.allGran,
-        Arrays.<DimensionSpec>asList(
-            new DefaultDimensionSpec(QueryRunnerTestHelper.marketDimension, "mar"),
-            new ExtractionDimensionSpec(
-                QueryRunnerTestHelper.qualityDimension,
-                "qual",
-                new LookupExtractionFn(new MapLookupExtractor(map, true), false, null, true, false)
-            ),
-            new DefaultDimensionSpec(QueryRunnerTestHelper.placementDimension, "place")
-        ), Lists.<String>newArrayList(), new PagingSpec(null, 3),
-        null
-    );
+    SelectQuery query = newTestQuery()
+        .dimensionSpecs(
+            Arrays.<DimensionSpec>asList(
+                new DefaultDimensionSpec(QueryRunnerTestHelper.marketDimension, "mar"),
+                new ExtractionDimensionSpec(
+                    QueryRunnerTestHelper.qualityDimension,
+                    "qual",
+                    new LookupExtractionFn(new MapLookupExtractor(map, true), false, null, true, false)
+                ),
+                new DefaultDimensionSpec(QueryRunnerTestHelper.placementDimension, "place")
+            )
+        )
+        .pagingSpec(PagingSpec.newSpec(3, cursorForNext))
+        .build();
+
     HashMap<String, Object> context = new HashMap<String, Object>();
     Iterable<Result<SelectResultValue>> results = Sequences.toList(
         runner.run(query, context),
@@ -196,7 +203,7 @@ public class SelectQueryRunnerTest
         new Result<SelectResultValue>(
             new DateTime("2011-01-12T00:00:00.000Z"),
             new SelectResultValue(
-                ImmutableMap.of(QueryRunnerTestHelper.segmentId, 2),
+                ImmutableMap.of(QueryRunnerTestHelper.segmentId, cursorForNext ? 3 : 2),
                 Arrays.asList(
                     new EventHolder(
                         QueryRunnerTestHelper.segmentId,
@@ -240,7 +247,7 @@ public class SelectQueryRunnerTest
         new Result<SelectResultValue>(
             new DateTime("2011-01-12T00:00:00.000Z"),
             new SelectResultValue(
-                ImmutableMap.of(QueryRunnerTestHelper.segmentId, -3),
+                ImmutableMap.of(QueryRunnerTestHelper.segmentId, cursorForNext ? -4 : -3),
                 Arrays.asList(
                     new EventHolder(
                         QueryRunnerTestHelper.segmentId,
@@ -286,17 +293,13 @@ public class SelectQueryRunnerTest
   @Test
   public void testSelectWithDimsAndMets()
   {
-    SelectQuery query = new SelectQuery(
-        new TableDataSource(QueryRunnerTestHelper.dataSource),
-        I_0112_0114,
-        descending,
-        null,
-        QueryRunnerTestHelper.allGran,
-        DefaultDimensionSpec.toSpec(Arrays.asList(QueryRunnerTestHelper.marketDimension)),
-        Arrays.asList(QueryRunnerTestHelper.indexMetric),
-        new PagingSpec(null, 3),
-        null
-    );
+    SelectQuery query = newTestQuery()
+        .intervals(I_0112_0114)
+        .dimensionSpecs(DefaultDimensionSpec.toSpec(QueryRunnerTestHelper.marketDimension))
+        .metrics(Arrays.asList(QueryRunnerTestHelper.indexMetric))
+        .pagingSpec(PagingSpec.newSpec(3, cursorForNext))
+        .build();
+
     HashMap<String, Object> context = new HashMap<String, Object>();
     Iterable<Result<SelectResultValue>> results = Sequences.toList(
         runner.run(query, context),
@@ -317,7 +320,8 @@ public class SelectQueryRunnerTest
             V_0112_0114
         ),
         offset.startOffset(),
-        offset.threshold()
+        offset.threshold(),
+        cursorForNext
     );
     verify(expectedResults, results);
   }
@@ -325,17 +329,12 @@ public class SelectQueryRunnerTest
   @Test
   public void testSelectPagination()
   {
-    SelectQuery query = new SelectQuery(
-        new TableDataSource(QueryRunnerTestHelper.dataSource),
-        I_0112_0114,
-        descending,
-        null,
-        QueryRunnerTestHelper.allGran,
-        DefaultDimensionSpec.toSpec(Arrays.asList(QueryRunnerTestHelper.qualityDimension)),
-        Arrays.asList(QueryRunnerTestHelper.indexMetric),
-        new PagingSpec(toPagingIdentifier(3, descending), 3),
-        null
-    );
+    SelectQuery query = newTestQuery()
+        .intervals(I_0112_0114)
+        .dimensionSpecs(DefaultDimensionSpec.toSpec(QueryRunnerTestHelper.qualityDimension))
+        .metrics(Arrays.asList(QueryRunnerTestHelper.indexMetric))
+        .pagingSpec(new PagingSpec(toPagingIdentifier(3, descending), 3, cursorForNext))
+        .build();
 
     Iterable<Result<SelectResultValue>> results = Sequences.toList(
         runner.run(query, Maps.newHashMap()),
@@ -353,7 +352,8 @@ public class SelectQueryRunnerTest
             V_0112_0114
         ),
         offset.startOffset(),
-        offset.threshold()
+        offset.threshold(),
+        cursorForNext
     );
     verify(expectedResults, results);
   }
@@ -363,17 +363,15 @@ public class SelectQueryRunnerTest
   {
     // startDelta + threshold pairs
     for (int[] param : new int[][]{{3, 3}, {0, 1}, {5, 5}, {2, 7}, {3, 0}}) {
-      SelectQuery query = new SelectQuery(
-          new TableDataSource(QueryRunnerTestHelper.dataSource),
-          I_0112_0114,
-          descending,
-          new SelectorDimFilter(QueryRunnerTestHelper.marketDimension, "spot"),
-          QueryRunnerTestHelper.dayGran,
-          DefaultDimensionSpec.toSpec(Lists.<String>newArrayList(QueryRunnerTestHelper.qualityDimension)),
-          Lists.<String>newArrayList(QueryRunnerTestHelper.indexMetric),
-          new PagingSpec(toPagingIdentifier(param[0], descending), param[1]),
-          null
-      );
+      SelectQuery query = newTestQuery()
+          .intervals(I_0112_0114)
+          .filters(new SelectorDimFilter(QueryRunnerTestHelper.marketDimension, "spot"))
+          .granularity(QueryRunnerTestHelper.dayGran)
+          .dimensionSpecs(DefaultDimensionSpec.toSpec(QueryRunnerTestHelper.qualityDimension))
+          .metrics(Lists.<String>newArrayList(QueryRunnerTestHelper.indexMetric))
+          .pagingSpec(new PagingSpec(toPagingIdentifier(param[0], descending), param[1], cursorForNext))
+          .build();
+
       HashMap<String, Object> context = new HashMap<String, Object>();
       Iterable<Result<SelectResultValue>> results = Sequences.toList(
           runner.run(query, context),
@@ -418,7 +416,8 @@ public class SelectQueryRunnerTest
       List<Result<SelectResultValue>> expectedResults = toExpected(
           events,
           offset.startOffset(),
-          offset.threshold()
+          offset.threshold(),
+          cursorForNext
       );
       verify(expectedResults, results);
     }
@@ -427,20 +426,17 @@ public class SelectQueryRunnerTest
   @Test
   public void testFullSelectNoResults()
   {
-    SelectQuery query = new SelectQuery(
-        new TableDataSource(QueryRunnerTestHelper.dataSource),
-        I_0112_0114,
-        descending,
-        new AndDimFilter(
-                Arrays.<DimFilter>asList(
-                    new SelectorDimFilter(QueryRunnerTestHelper.marketDimension, "spot"),
-                    new SelectorDimFilter(QueryRunnerTestHelper.marketDimension, "foo")
-                )
-            ),
-        QueryRunnerTestHelper.allGran,
-        DefaultDimensionSpec.toSpec(Lists.<String>newArrayList()), Lists.<String>newArrayList(), new PagingSpec(null, 3),
-        null
-    );
+    SelectQuery query = newTestQuery()
+        .intervals(I_0112_0114)
+        .filters(new AndDimFilter(
+                     Arrays.<DimFilter>asList(
+                         new SelectorDimFilter(QueryRunnerTestHelper.marketDimension, "spot"),
+                         new SelectorDimFilter(QueryRunnerTestHelper.marketDimension, "foo")
+                     )
+                 )
+        )
+        .pagingSpec(PagingSpec.newSpec(3, cursorForNext))
+        .build();
 
     Iterable<Result<SelectResultValue>> results = Sequences.toList(
         runner.run(query, Maps.newHashMap()),
@@ -463,17 +459,12 @@ public class SelectQueryRunnerTest
   @Test
   public void testFullSelectNoDimensionAndMetric()
   {
-    SelectQuery query = new SelectQuery(
-        new TableDataSource(QueryRunnerTestHelper.dataSource),
-        I_0112_0114,
-        descending,
-        null,
-        QueryRunnerTestHelper.allGran,
-        DefaultDimensionSpec.toSpec(Lists.<String>newArrayList("foo")),
-        Lists.<String>newArrayList("foo2"),
-        new PagingSpec(null, 3),
-        null
-    );
+    SelectQuery query = newTestQuery()
+        .intervals(I_0112_0114)
+        .dimensionSpecs(DefaultDimensionSpec.toSpec("foo"))
+        .metrics(Lists.<String>newArrayList("foo2"))
+        .pagingSpec(PagingSpec.newSpec(3, cursorForNext))
+        .build();
 
     Iterable<Result<SelectResultValue>> results = Sequences.toList(
         runner.run(query, Maps.newHashMap()),
@@ -493,7 +484,8 @@ public class SelectQueryRunnerTest
     List<Result<SelectResultValue>> expectedResults = toExpected(
         events,
         offset.startOffset(),
-        offset.threshold()
+        offset.threshold(),
+        cursorForNext
     );
     verify(expectedResults, results);
   }
@@ -550,7 +542,8 @@ public class SelectQueryRunnerTest
   private List<Result<SelectResultValue>> toExpected(
       List<List<Map<String, Object>>> targets,
       final int offset,
-      final int threshold
+      final int threshold,
+      final boolean cursorForNext
   )
   {
     if (offset < 0) {
@@ -572,11 +565,13 @@ public class SelectQueryRunnerTest
           holders.add(new EventHolder(QueryRunnerTestHelper.segmentId, newOffset++, group.get(i)));
         }
       }
-      int lastOffset = holders.isEmpty() ? offset : holders.get(holders.size() - 1).getOffset();
+      if (!cursorForNext) {
+        newOffset = holders.isEmpty() ? offset : holders.get(holders.size() - 1).getOffset();
+      }
       expected.add(
           new Result(
               new DateTime(group.get(0).get(EventHolder.timestampKey)),
-              new SelectResultValue(ImmutableMap.of(QueryRunnerTestHelper.segmentId, lastOffset), holders)
+              new SelectResultValue(ImmutableMap.of(QueryRunnerTestHelper.segmentId, newOffset), holders)
           )
       );
     }

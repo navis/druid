@@ -35,16 +35,19 @@ public class SelectBinaryFn
   private final QueryGranularity gran;
   private final PagingSpec pagingSpec;
   private final boolean descending;
+  private final boolean cursorForNext;
 
   public SelectBinaryFn(
       QueryGranularity granularity,
       PagingSpec pagingSpec,
-      boolean descending
+      boolean descending,
+      boolean cursorForNext
   )
   {
     this.gran = granularity;
     this.pagingSpec = pagingSpec;
     this.descending = descending;
+    this.cursorForNext = cursorForNext;
   }
 
   @Override
@@ -75,7 +78,12 @@ public class SelectBinaryFn
                                ? arg1.getTimestamp()
                                : gran.toDateTime(gran.truncate(arg1.getTimestamp().getMillis()));
 
-    SelectResultValueBuilder builder = new SelectResultValueBuilder.MergeBuilder(timestamp, pagingSpec, descending);
+    final SelectResultValueBuilder builder = new SelectResultValueBuilder.MergeBuilder(
+        timestamp,
+        pagingSpec,
+        descending,
+        cursorForNext
+    );
 
     for (EventHolder event : arg1Val) {
       builder.addEntry(event);

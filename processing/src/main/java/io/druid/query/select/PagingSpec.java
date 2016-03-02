@@ -21,6 +21,7 @@ package io.druid.query.select;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.Maps;
 import com.google.common.primitives.Ints;
 import com.metamx.common.StringUtils;
 
@@ -32,17 +33,49 @@ import java.util.Map;
  */
 public class PagingSpec
 {
+  public static PagingSpec newSpec(int threshold, boolean cursorForNext)
+  {
+    return new PagingSpec(null, threshold, cursorForNext);
+  }
+
+  public static LinkedHashMap<String, Integer> merge(Iterable<Map<String, Integer>> cursors)
+  {
+    LinkedHashMap<String, Integer> next = Maps.newLinkedHashMap();
+    for (Map<String, Integer> cursor : cursors) {
+      for (Map.Entry<String, Integer> entry : cursor.entrySet()) {
+        next.put(entry.getKey(), entry.getValue());
+      }
+    }
+    return next;
+  }
+
+  public static LinkedHashMap<String, Integer> next(LinkedHashMap<String, Integer> cursor, boolean descending)
+  {
+    for (Map.Entry<String, Integer> entry : cursor.entrySet()) {
+      entry.setValue(descending ? entry.getValue() - 1 : entry.getValue() + 1);
+    }
+    return cursor;
+  }
+
   private final LinkedHashMap<String, Integer> pagingIdentifiers;
   private final int threshold;
+  private final boolean cursorForNext;
 
   @JsonCreator
   public PagingSpec(
       @JsonProperty("pagingIdentifiers") LinkedHashMap<String, Integer> pagingIdentifiers,
-      @JsonProperty("threshold") int threshold
+      @JsonProperty("threshold") int threshold,
+      @JsonProperty("cursorForNext") boolean cursorForNext
   )
   {
     this.pagingIdentifiers = pagingIdentifiers == null ? new LinkedHashMap<String, Integer>() : pagingIdentifiers;
     this.threshold = threshold;
+    this.cursorForNext = cursorForNext;
+  }
+
+  public PagingSpec(LinkedHashMap<String, Integer> pagingIdentifiers, int threshold)
+  {
+    this(pagingIdentifiers, threshold, false);
   }
 
   @JsonProperty
@@ -55,6 +88,12 @@ public class PagingSpec
   public int getThreshold()
   {
     return threshold;
+  }
+
+  @JsonProperty
+  public boolean isCursorForNext()
+  {
+    return cursorForNext;
   }
 
   public byte[] getCacheKey()
@@ -75,7 +114,7 @@ public class PagingSpec
 
     final byte[] thresholdBytes = ByteBuffer.allocate(Ints.BYTES).putInt(threshold).array();
 
-    final ByteBuffer queryCacheKey = ByteBuffer.allocate(pagingKeysSize + pagingValuesSize + thresholdBytes.length);
+    final ByteBuffer queryCacheKey = ByteBuffer.allocate(pagingKeysSize + pagingValuesSize + thresholdBytes.length + 1);
 
     for (byte[] pagingKey : pagingKeys) {
       queryCacheKey.put(pagingKey);
@@ -86,8 +125,18 @@ public class PagingSpec
     }
 
     queryCacheKey.put(thresholdBytes);
+    queryCacheKey.put(isCursorForNext() ? (byte) 0x01 : 0x00);
 
     return queryCacheKey.array();
+  }
+
+  public PagingOffset getOffset(String identifier, boolean descending)
+  {
+    Integer offset = pagingIdentifiers.get(identifier);
+    if (offset == null) {
+      offset = PagingOffset.toOffset(0, descending);
+    }
+    return PagingOffset.of(offset, threshold);
   }
 
   @Override
@@ -96,12 +145,15 @@ public class PagingSpec
     if (this == o) {
       return true;
     }
-    if (!(o instanceof PagingSpec)) {
+    if (o == null || getClass() != o.getClass()) {
       return false;
     }
 
     PagingSpec that = (PagingSpec) o;
 
+    if (cursorForNext != that.cursorForNext) {
+      return false;
+    }
     if (threshold != that.threshold) {
       return false;
     }
@@ -117,6 +169,7 @@ public class PagingSpec
   {
     int result = pagingIdentifiers.hashCode();
     result = 31 * result + threshold;
+    result = 31 * result + (cursorForNext ? 1 : 0);
     return result;
   }
 
@@ -126,16 +179,7 @@ public class PagingSpec
     return "PagingSpec{" +
            "pagingIdentifiers=" + pagingIdentifiers +
            ", threshold=" + threshold +
+           ", cursorForNext=" + cursorForNext +
            '}';
   }
-
-  public PagingOffset getOffset(String identifier, boolean descending)
-  {
-    Integer offset = pagingIdentifiers.get(identifier);
-    if (offset == null) {
-      offset = PagingOffset.toOffset(0, descending);
-    }
-    return PagingOffset.of(offset, threshold);
-  }
-
 }

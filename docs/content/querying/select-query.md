@@ -167,5 +167,25 @@ This can be used with the next query's pagingSpec:
    "pagingSpec":{"pagingIdentifiers": {"wikipedia_2012-12-29T00:00:00.000Z_2013-01-10T08:00:00.000Z_2013-01-10T08:13:47.830Z_v9" : 5}, "threshold":5}
       
  }
+```
 
 Note that in the second query, an offset is specified and that it is 1 greater than the largest offset found in the initial results. To return the next "page", this offset must be incremented by 1 (should be decremented by 1 for descending query), with each new query. When an empty results set is received, the very last page has been returned.
+
+When `cursorForNext` in pagingSpec is true, `pagingIdentifiers` will point the next offset of last row returned, which means returned pagingIdentifiers can be used as-is for next page.
+
+With paging spec,
+
+```json
+ {
+   ...
+   "pagingSpec":{"pagingIdentifiers": {}, "threshold":5, "cursorForNext":true}
+ }
+```
+
+The query will return pagingIdentifiers:
+
+```json
+    "pagingIdentifiers" : {
+      "wikipedia_2012-12-29T00:00:00.000Z_2013-01-10T08:00:00.000Z_2013-01-10T08:13:47.830Z_v9" : 5
+    },
+```

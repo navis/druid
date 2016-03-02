@@ -44,12 +44,12 @@ public class SelectBinaryFnTest
   @Test
   public void testApply() throws Exception
   {
-    SelectBinaryFn binaryFn = new SelectBinaryFn(QueryGranularity.ALL, new PagingSpec(null, 5), false);
+    SelectBinaryFn binaryFn = new SelectBinaryFn(QueryGranularity.ALL, new PagingSpec(null, 5), false, false);
 
     Result<SelectResultValue> res1 = new Result<>(
         new DateTime("2013-01-01"),
         new SelectResultValue(
-            ImmutableMap.<String, Integer>of(),
+            ImmutableMap.<String, Integer>of(segmentId1, 2),
             Arrays.asList(
                 new EventHolder(
                     segmentId1,
@@ -89,7 +89,7 @@ public class SelectBinaryFnTest
     Result<SelectResultValue> res2 = new Result<>(
         new DateTime("2013-01-01"),
         new SelectResultValue(
-            ImmutableMap.<String, Integer>of(),
+            ImmutableMap.<String, Integer>of(segmentId2, 2),
             Arrays.asList(
                 new EventHolder(
                     segmentId2,

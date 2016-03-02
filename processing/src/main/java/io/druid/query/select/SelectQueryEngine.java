@@ -109,6 +109,7 @@ public class SelectQueryEngine
               metSelectors.put(metric, metricSelector);
             }
 
+            final boolean cursorForNext = query.isCursorForNext();
             final PagingOffset offset = query.getPagingOffset(segmentId);
 
             cursor.advanceTo(offset.startDelta());
@@ -160,7 +161,7 @@ public class SelectQueryEngine
               );
             }
 
-            builder.finished(segmentId, lastOffset);
+            builder.finished(segmentId, cursorForNext ? offset.current() : lastOffset);
 
             return builder.build();
           }

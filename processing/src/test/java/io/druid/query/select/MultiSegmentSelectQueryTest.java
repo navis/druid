@@ -21,7 +21,6 @@ package io.druid.query.select;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.io.CharSource;
 import com.metamx.common.guava.Sequences;
 import io.druid.granularity.QueryGranularity;
@@ -55,6 +54,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -188,23 +188,53 @@ public class MultiSegmentSelectQueryTest
     IOUtils.closeQuietly(segment_override);
   }
 
-  private final Druids.SelectQueryBuilder builder =
-      Druids.newSelectQueryBuilder()
-            .dataSource(new TableDataSource(QueryRunnerTestHelper.dataSource))
-            .intervals(SelectQueryRunnerTest.I_0112_0114)
-            .granularity(QueryRunnerTestHelper.allGran)
-            .dimensionSpecs(DefaultDimensionSpec.toSpec(QueryRunnerTestHelper.dimensions))
-            .pagingSpec(new PagingSpec(null, 3));
+  private Druids.SelectQueryBuilder newBuilder(boolean cursorForNext)
+  {
+    return Druids.newSelectQueryBuilder()
+                 .dataSource(new TableDataSource(QueryRunnerTestHelper.dataSource))
+                 .intervals(SelectQueryRunnerTest.I_0112_0114)
+                 .granularity(QueryRunnerTestHelper.allGran)
+                 .dimensionSpecs(DefaultDimensionSpec.toSpec(QueryRunnerTestHelper.dimensions))
+                 .pagingSpec(PagingSpec.newSpec(3, cursorForNext));
+  }
 
   @Test
-  public void testAllGranularityAscending()
+  public void testAllGranularity()
   {
-    SelectQuery query = builder.build();
+    runAllGranularityTest(
+        newBuilder(false).build(),
+        new int[][]{
+            {2, -1, -1, -1, 3}, {3, 1, -1, -1, 3}, {-1, 3, 0, -1, 3}, {-1, -1, 3, -1, 3}, {-1, -1, 4, 1, 3},
+            {-1, -1, -1, 4, 3}, {-1, -1, -1, 7, 3}, {-1, -1, -1, 10, 3}, {-1, -1, -1, 12, 2}, {-1, -1, -1, 13, 0}
+        }
+    );
+    runAllGranularityTest(
+        newBuilder(true).build(),
+        new int[][]{
+            {3, -1, -1, -1, 3}, {4, 2, -1, -1, 3}, {-1, 4, 1, -1, 3}, {-1, -1, 4, -1, 3}, {-1, -1, 5, 2, 3},
+            {-1, -1, -1, 5, 3}, {-1, -1, -1, 8, 3}, {-1, -1, -1, 11, 3}, {-1, -1, -1, 13, 2}, {-1, -1, -1, 13, 0}
+        }
+    );
 
-    for (int[] expected : new int[][]{
-        {2, -1, -1, -1, 3}, {3, 1, -1, -1, 3}, {-1, 3, 0, -1, 3}, {-1, -1, 3, -1, 3}, {-1, -1, 4, 1, 3},
-        {-1, -1, -1, 4, 3}, {-1, -1, -1, 7, 3}, {-1, -1, -1, 10, 3}, {-1, -1, -1, 12, 2}, {-1, -1, -1, 13, 0}
-    }) {
+    runAllGranularityTest(
+        newBuilder(false).descending(true).build(),
+        new int[][]{
+            {0, 0, 0, -3, 3}, {0, 0, 0, -6, 3}, {0, 0, 0, -9, 3}, {0, 0, 0, -12, 3}, {0, 0, -2, -13, 3},
+            {0, 0, -5, 0, 3}, {0, -3, 0, 0, 3}, {-2, -4, 0, 0, 3}, {-4, 0, 0, 0, 2}, {-5, 0, 0, 0, 0}
+        }
+    );
+    runAllGranularityTest(
+        newBuilder(true).descending(true).build(),
+        new int[][]{
+            {0, 0, 0, -4, 3}, {0, 0, 0, -7, 3}, {0, 0, 0, -10, 3}, {0, 0, 0, -13, 3}, {0, 0, -3, -14, 3},
+            {0, 0, -6, 0, 3}, {0, -4, 0, 0, 3}, {-3, -5, 0, 0, 3}, {-5, 0, 0, 0, 2}, {-5, 0, 0, 0, 0}
+        }
+    );
+  }
+
+  private void runAllGranularityTest(SelectQuery query, int[][] expectedOffsets)
+  {
+    for (int[] expected : expectedOffsets) {
       List<Result<SelectResultValue>> results = Sequences.toList(
           runner.run(query, ImmutableMap.of()),
           Lists.<Result<SelectResultValue>>newArrayList()
@@ -213,55 +243,59 @@ public class MultiSegmentSelectQueryTest
 
       SelectResultValue value = results.get(0).getValue();
       Map<String, Integer> pagingIdentifiers = value.getPagingIdentifiers();
-      for (int i = 0; i < expected.length - 1; i++) {
-        if (expected[i] >= 0) {
-          Assert.assertEquals(expected[i], pagingIdentifiers.get(segmentIdentifiers.get(i)).intValue());
+
+      LinkedHashMap<String, Integer> merged = PagingSpec.merge(Arrays.asList(pagingIdentifiers));
+
+      for (int i = 0; i < 4; i++) {
+        if (query.isDescending() ^ expected[i] >= 0) {
+          Assert.assertEquals(
+              expected[i], pagingIdentifiers.get(segmentIdentifiers.get(i)).intValue()
+          );
         }
       }
-      Assert.assertEquals(expected[expected.length - 1], value.getEvents().size());
+      Assert.assertEquals(expected[4], value.getEvents().size());
 
-      query = query.withPagingSpec(toNextPager(3, query.isDescending(), pagingIdentifiers));
+      query = query.withPagingSpec(toNextCursor(merged, query, 3));
     }
   }
 
   @Test
-  public void testAllGranularityDescending()
+  public void testDayGranularity()
   {
-    SelectQuery query = builder.descending(true).build();
-
-    for (int[] expected : new int[][]{
-        {0, 0, 0, -3, 3}, {0, 0, 0, -6, 3}, {0, 0, 0, -9, 3}, {0, 0, 0, -12, 3}, {0, 0, -2, -13, 3},
-        {0, 0, -5, 0, 3}, {0, -3, 0, 0, 3}, {-2, -4, 0, 0, 3}, {-4, 0, 0, 0, 2}, {-5, 0, 0, 0, 0}
-    }) {
-      List<Result<SelectResultValue>> results = Sequences.toList(
-          runner.run(query, ImmutableMap.of()),
-          Lists.<Result<SelectResultValue>>newArrayList()
-      );
-      Assert.assertEquals(1, results.size());
-
-      SelectResultValue value = results.get(0).getValue();
-      Map<String, Integer> pagingIdentifiers = value.getPagingIdentifiers();
-
-      for (int i = 0; i < expected.length - 1; i++) {
-        if (expected[i] < 0) {
-          Assert.assertEquals(expected[i], pagingIdentifiers.get(segmentIdentifiers.get(i)).intValue());
+    runDayGranularityTest(
+        newBuilder(false).granularity(QueryRunnerTestHelper.dayGran).build(),
+        new int[][]{
+            {2, -1, -1, 2, 3, 0, 0, 3}, {3, 1, -1, 5, 1, 2, 0, 3}, {-1, 3, 0, 8, 0, 2, 1, 3},
+            {-1, -1, 3, 11, 0, 0, 3, 3}, {-1, -1, 4, 12, 0, 0, 1, 1}, {-1, -1, 5, 13, 0, 0, 0, 0}
         }
-      }
-      Assert.assertEquals(expected[expected.length - 1], value.getEvents().size());
+    );
+    runDayGranularityTest(
+        newBuilder(true).granularity(QueryRunnerTestHelper.dayGran).build(),
+        new int[][]{
+            {3, -1, -1, 3, 3, 0, 0, 3}, {4, 2, -1, 6, 1, 2, 0, 3}, {-1, 4, 1, 9, 0, 2, 1, 3},
+            {-1, -1, 4, 12, 0, 0, 3, 3}, {-1, -1, 5, 13, 0, 0, 1, 1}, {-1, -1, 5, 13, 0, 0, 0, 0}
+        }
+    );
 
-      query = query.withPagingSpec(toNextPager(3, query.isDescending(), pagingIdentifiers));
-    }
+    runDayGranularityTest(
+        newBuilder(false).granularity(QueryRunnerTestHelper.dayGran).descending(true).build(),
+        new int[][]{
+            {0, 0, -3, -3, 0, 0, 3, 3}, {0, -1, -5, -6, 0, 1, 2, 3}, {0, -4, 0, -9, 0, 3, 0, 3},
+            {-3, 0, 0, -12, 3, 0, 0, 3}, {-4, 0, 0, -13, 1, 0, 0, 1}, {-5, 0, 0, -14, 0, 0, 0, 0}
+        }
+    );
+    runDayGranularityTest(
+        newBuilder(true).granularity(QueryRunnerTestHelper.dayGran).descending(true).build(),
+        new int[][]{
+            {0, 0, -4, -4, 0, 0, 3, 3}, {0, -2, -6, -7, 0, 1, 2, 3}, {0, -5, 0, -10, 0, 3, 0, 3},
+            {-4, 0, 0, -13, 3, 0, 0, 3}, {-5, 0, 0, -14, 1, 0, 0, 1}, {-5, 0, 0, -14, 0, 0, 0, 0}
+        }
+    );
   }
 
-  @Test
-  public void testDayGranularityAscending()
+  private void runDayGranularityTest(SelectQuery query, int[][] expectedOffsets)
   {
-    SelectQuery query = builder.granularity(QueryRunnerTestHelper.dayGran).build();
-
-    for (int[] expected : new int[][]{
-        {2, -1, -1, 2, 3, 0, 0, 3}, {3, 1, -1, 5, 1, 2, 0, 3}, {-1, 3, 0, 8, 0, 2, 1, 3},
-        {-1, -1, 3, 11, 0, 0, 3, 3}, {-1, -1, 4, 12, 0, 0, 1, 1}, {-1, -1, 5, 13, 0, 0, 0, 0}
-    }) {
+    for (int[] expected : expectedOffsets) {
       List<Result<SelectResultValue>> results = Sequences.toList(
           runner.run(query, ImmutableMap.of()),
           Lists.<Result<SelectResultValue>>newArrayList()
@@ -274,59 +308,24 @@ public class MultiSegmentSelectQueryTest
       Map<String, Integer> pagingIdentifiers0 = value0.getPagingIdentifiers();
       Map<String, Integer> pagingIdentifiers1 = value1.getPagingIdentifiers();
 
+      LinkedHashMap<String, Integer> merged =
+          PagingSpec.merge(Arrays.asList(pagingIdentifiers0, pagingIdentifiers1));
+
       for (int i = 0; i < 4; i++) {
-        if (expected[i] >= 0) {
-          Map<String, Integer> paging = i < 3 ? pagingIdentifiers0 : pagingIdentifiers1;
-          Assert.assertEquals(expected[i], paging.get(segmentIdentifiers.get(i)).intValue());
+        if (query.isDescending() ^ expected[i] >= 0) {
+          Assert.assertEquals(expected[i], merged.get(segmentIdentifiers.get(i)).intValue());
         }
       }
 
-      query = query.withPagingSpec(toNextPager(3, query.isDescending(), pagingIdentifiers0, pagingIdentifiers1));
+      query = query.withPagingSpec(toNextCursor(merged, query, 3));
     }
   }
 
-  @Test
-  public void testDayGranularityDescending()
+  private PagingSpec toNextCursor(LinkedHashMap<String, Integer> merged, SelectQuery query, int threshold)
   {
-    QueryGranularity granularity = QueryRunnerTestHelper.dayGran;
-    SelectQuery query = builder.granularity(granularity).descending(true).build();
-
-    for (int[] expected : new int[][]{
-        {0, 0, -3, -3, 0, 0, 3, 3}, {0, -1, -5, -6, 0, 1, 2, 3}, {0, -4, 0, -9, 0, 3, 0, 3},
-        {-3, 0, 0, -12, 3, 0, 0, 3}, {-4, 0, 0, -13, 1, 0, 0, 1}, {-5, 0, 0, -14, 0, 0, 0, 0}
-    }) {
-      List<Result<SelectResultValue>> results = Sequences.toList(
-          runner.run(query, ImmutableMap.of()),
-          Lists.<Result<SelectResultValue>>newArrayList()
-      );
-      Assert.assertEquals(2, results.size());
-
-      SelectResultValue value0 = results.get(0).getValue();
-      SelectResultValue value1 = results.get(1).getValue();
-
-      Map<String, Integer> pagingIdentifiers0 = value0.getPagingIdentifiers();
-      Map<String, Integer> pagingIdentifiers1 = value1.getPagingIdentifiers();
-
-      for (int i = 0; i < 4; i++) {
-        if (expected[i] < 0) {
-          Map<String, Integer> paging = i < 3 ? pagingIdentifiers1 : pagingIdentifiers0;
-          Assert.assertEquals(expected[i], paging.get(segmentIdentifiers.get(i)).intValue());
-        }
-      }
-
-      query = query.withPagingSpec(toNextPager(3, query.isDescending(), pagingIdentifiers0, pagingIdentifiers1));
+    if (!query.isCursorForNext()) {
+      merged = PagingSpec.next(merged, query.isDescending());
     }
-  }
-
-  @SafeVarargs
-  private final PagingSpec toNextPager(int threshold, boolean descending, Map<String, Integer>... pagers)
-  {
-    LinkedHashMap<String, Integer> next = Maps.newLinkedHashMap();
-    for (Map<String, Integer> pager : pagers) {
-      for (Map.Entry<String, Integer> entry : pager.entrySet()) {
-        next.put(entry.getKey(), descending ? entry.getValue() - 1 : entry.getValue() + 1);
-      }
-    }
-    return new PagingSpec(next, threshold);
+    return new PagingSpec(merged, threshold, query.isCursorForNext());
   }
 }
