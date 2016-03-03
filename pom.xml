@@ -101,6 +101,7 @@
         <module>extensions/cloudfiles-extensions</module>
         <module>extensions/datasketches</module>
         <module>extensions/avro-extensions</module>
+        <module>extensions/parser-extensions</module>
         <!-- distribution packaging -->
         <module>distribution</module>
 
