@@ -59,7 +59,11 @@ public class NotDimFilter implements DimFilter
   @Override
   public DimFilter optimize()
   {
-    return Druids.newNotDimFilterBuilder().field(this.getField().optimize()).build();
+    DimFilter optimized = getField().optimize();
+    if (optimized instanceof NotDimFilter) {
+      return ((NotDimFilter)optimized).getField();
+    }
+    return Druids.newNotDimFilterBuilder().field(optimized).build();
   }
 
   @Override

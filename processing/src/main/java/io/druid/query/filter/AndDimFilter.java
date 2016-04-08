@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 import io.druid.query.Druids;
 import io.druid.segment.filter.AndFilter;
 import io.druid.segment.filter.Filters;
@@ -62,8 +63,19 @@ public class AndDimFilter implements DimFilter
   @Override
   public DimFilter optimize()
   {
-    List<DimFilter> elements = DimFilters.optimize(fields);
-    return elements.size() == 1 ? elements.get(0) : Druids.newAndDimFilterBuilder().fields(elements).build();
+    List<DimFilter> optimized = DimFilters.optimize(fields);
+    if (optimized.size() == 1) {
+      return optimized.get(0);
+    }
+    List<DimFilter> elements = Lists.newArrayList();
+    for (DimFilter filter : optimized) {
+      if (filter instanceof AndDimFilter) {
+        elements.addAll(((AndDimFilter) filter).getFields());
+      } else {
+        elements.add(filter);
+      }
+    }
+    return Druids.newAndDimFilterBuilder().fields(elements).build();
   }
 
   @Override

@@ -75,4 +75,46 @@ public class SelectorDimFilterTest
     );
     Assert.assertEquals(selectorDimFilter, filter.optimize());
   }
+
+  @Test
+  public void testSimpleOptimize2()
+  {
+    SelectorDimFilter filter1 = new SelectorDimFilter("abc", "c", null);
+    SelectorDimFilter filter2 = new SelectorDimFilter("abc", "d", null);
+    SelectorDimFilter filter3 = new SelectorDimFilter("abc", "e", null);
+    DimFilter filter = new AndDimFilter(
+        Arrays.<DimFilter>asList(
+            filter1,
+            new AndDimFilter(Arrays.<DimFilter>asList(filter2, filter3))
+        )
+    );
+    AndDimFilter expected = new AndDimFilter(Arrays.<DimFilter>asList(filter1, filter2, filter3));
+
+    Assert.assertEquals(expected, filter.optimize());
+  }
+
+  @Test
+  public void testSimpleOptimize3()
+  {
+    SelectorDimFilter filter1 = new SelectorDimFilter("abc", "c", null);
+    SelectorDimFilter filter2 = new SelectorDimFilter("abc", "d", null);
+    SelectorDimFilter filter3 = new SelectorDimFilter("abc", "e", null);
+    DimFilter filter = new OrDimFilter(
+        Arrays.<DimFilter>asList(
+            filter1,
+            new OrDimFilter(Arrays.<DimFilter>asList(filter2, filter3))
+        )
+    );
+    OrDimFilter expected = new OrDimFilter(Arrays.<DimFilter>asList(filter1, filter2, filter3));
+
+    Assert.assertEquals(expected, filter.optimize());
+  }
+
+  @Test
+  public void testSimpleOptimize4()
+  {
+    SelectorDimFilter filter1 = new SelectorDimFilter("abc", "c", null);
+    DimFilter filter = new NotDimFilter(new NotDimFilter(filter1));
+    Assert.assertEquals(filter1, filter.optimize());
+  }
 }
