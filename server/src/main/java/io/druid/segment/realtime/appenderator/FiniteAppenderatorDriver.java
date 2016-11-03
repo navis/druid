@@ -457,6 +457,7 @@ public class FiniteAppenderatorDriver implements Closeable
         for (final DataSegment dataSegment : segmentsAndMetadata.getSegments()) {
           handoffNotifier.registerSegmentHandoffCallback(
               new SegmentDescriptor(
+                  dataSegment.getDataSource(),
                   dataSegment.getInterval(),
                   dataSegment.getVersion(),
                   dataSegment.getShardSpec().getPartitionNum()

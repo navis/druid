@@ -461,7 +461,12 @@ public class RealtimePlumber implements Plumber
         }
     );
     handoffNotifier.registerSegmentHandoffCallback(
-        new SegmentDescriptor(sink.getInterval(), sink.getVersion(), config.getShardSpec().getPartitionNum()),
+        new SegmentDescriptor(
+            sink.getSegment().getDataSource(),
+            sink.getInterval(),
+            sink.getVersion(),
+            config.getShardSpec().getPartitionNum()
+        ),
         mergeExecutor, new Runnable()
         {
           @Override

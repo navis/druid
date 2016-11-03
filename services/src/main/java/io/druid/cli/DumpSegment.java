@@ -201,7 +201,7 @@ public class DumpSegment extends GuiceRunnable
                                               .configure(JsonGenerator.Feature.AUTO_CLOSE_TARGET, false);
     final SegmentMetadataQuery query = new SegmentMetadataQuery(
         new TableDataSource("dataSource"),
-        new SpecificSegmentSpec(new SegmentDescriptor(index.getDataInterval(), "0", 0)),
+        new SpecificSegmentSpec(new SegmentDescriptor("dataSource", index.getDataInterval(), "0", 0)),
         new ListColumnIncluderator(getColumnsToInclude(index)),
         false,
         null,

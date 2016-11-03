@@ -59,6 +59,7 @@ public class SpecificSegmentQueryRunnerTest
   {
     final ObjectMapper mapper = new DefaultObjectMapper();
     SegmentDescriptor descriptor = new SegmentDescriptor(
+        "foo",
         new Interval("2012-01-01T00:00:00Z/P1D"),
         "version",
         0
@@ -134,6 +135,7 @@ public class SpecificSegmentQueryRunnerTest
   {
     final ObjectMapper mapper = new DefaultObjectMapper();
     SegmentDescriptor descriptor = new SegmentDescriptor(
+        "foo",
         new Interval("2012-01-01T00:00:00Z/P1D"),
         "version",
         0

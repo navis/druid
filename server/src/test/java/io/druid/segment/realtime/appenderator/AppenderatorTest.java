@@ -406,6 +406,7 @@ public class AppenderatorTest
                                                new MultipleSpecificSegmentSpec(
                                                    ImmutableList.of(
                                                        new SegmentDescriptor(
+                                                           IDENTIFIERS.get(2).getDataSource(),
                                                            IDENTIFIERS.get(2).getInterval(),
                                                            IDENTIFIERS.get(2).getVersion(),
                                                            IDENTIFIERS.get(2).getShardSpec().getPartitionNum()
@@ -442,6 +443,7 @@ public class AppenderatorTest
                                                new MultipleSpecificSegmentSpec(
                                                    ImmutableList.of(
                                                        new SegmentDescriptor(
+                                                           IDENTIFIERS.get(2).getDataSource(),
                                                            new Interval("2001/PT1H"),
                                                            IDENTIFIERS.get(2).getVersion(),
                                                            IDENTIFIERS.get(2).getShardSpec().getPartitionNum()
@@ -478,11 +480,13 @@ public class AppenderatorTest
                                                new MultipleSpecificSegmentSpec(
                                                    ImmutableList.of(
                                                        new SegmentDescriptor(
+                                                           IDENTIFIERS.get(2).getDataSource(),
                                                            new Interval("2001/PT1H"),
                                                            IDENTIFIERS.get(2).getVersion(),
                                                            IDENTIFIERS.get(2).getShardSpec().getPartitionNum()
                                                        ),
                                                        new SegmentDescriptor(
+                                                           IDENTIFIERS.get(2).getDataSource(),
                                                            new Interval("2001T03/PT1H"),
                                                            IDENTIFIERS.get(2).getVersion(),
                                                            IDENTIFIERS.get(2).getShardSpec().getPartitionNum()

@@ -77,10 +77,8 @@ public class FluentQueryRunnerBuilder<T>
     public FluentQueryRunner applyPreMergeDecoration()
     {
       return from(
-          new UnionQueryRunner<T>(
-              toolChest.preMergeQueryDecoration(
-                  baseRunner
-              )
+          toolChest.preMergeQueryDecoration(
+              baseRunner
           )
       );
     }

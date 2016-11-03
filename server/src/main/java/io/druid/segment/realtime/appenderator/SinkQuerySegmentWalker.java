@@ -107,6 +107,7 @@ public class SinkQuerySegmentWalker implements QuerySegmentWalker
   @Override
   public <T> QueryRunner<T> getQueryRunnerForIntervals(final Query<T> query, final Iterable<Interval> intervals)
   {
+    final String dataSource = Iterables.getOnlyElement(query.getDataSource().getNames());
     final Iterable<SegmentDescriptor> specs = FunctionalIterable
         .create(intervals)
         .transformCat(
@@ -134,6 +135,7 @@ public class SinkQuerySegmentWalker implements QuerySegmentWalker
                           public SegmentDescriptor apply(final PartitionChunk<Sink> chunk)
                           {
                             return new SegmentDescriptor(
+                                dataSource,
                                 holder.getInterval(),
                                 holder.getVersion(),
                                 chunk.getChunkNumber()

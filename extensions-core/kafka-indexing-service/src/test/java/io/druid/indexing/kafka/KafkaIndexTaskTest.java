@@ -1570,6 +1570,6 @@ public class KafkaIndexTaskTest
   private SegmentDescriptor SD(final Task task, final String intervalString, final int partitionNum)
   {
     final Interval interval = new Interval(intervalString);
-    return new SegmentDescriptor(interval, getLock(task, interval).getVersion(), partitionNum);
+    return new SegmentDescriptor(task.getDataSource(), interval, getLock(task, interval).getVersion(), partitionNum);
   }
 }

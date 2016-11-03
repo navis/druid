@@ -143,12 +143,7 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
   @Override
   public Sequence<T> run(QuerySegmentWalker walker, Map<String, Object> context)
   {
-    return run(querySegmentSpec.lookup(this, walker), context);
-  }
-
-  public Sequence<T> run(QueryRunner<T> runner, Map<String, Object> context)
-  {
-    return runner.run(this, context);
+    return querySegmentSpec.lookup(this, walker).run(this, context);
   }
 
   @Override

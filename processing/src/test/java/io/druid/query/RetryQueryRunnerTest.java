@@ -20,6 +20,7 @@
 package io.druid.query;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
 import com.google.common.collect.Maps;
@@ -75,6 +76,7 @@ public class RetryQueryRunnerTest
           {
             ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                 new SegmentDescriptor(
+                    Iterables.getOnlyElement(query.getDataSource().getNames()),
                     new Interval(
                         178888,
                         1999999
@@ -135,6 +137,7 @@ public class RetryQueryRunnerTest
             if ((int) context.get("count") == 0) {
               ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                   new SegmentDescriptor(
+                      Iterables.getOnlyElement(query.getDataSource().getNames()),
                       new Interval(
                           178888,
                           1999999
@@ -202,6 +205,7 @@ public class RetryQueryRunnerTest
             if ((int) context.get("count") < 3) {
               ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                   new SegmentDescriptor(
+                      Iterables.getOnlyElement(query.getDataSource().getNames()),
                       new Interval(
                           178888,
                           1999999
@@ -267,6 +271,7 @@ public class RetryQueryRunnerTest
           {
             ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                 new SegmentDescriptor(
+                    Iterables.getOnlyElement(query.getDataSource().getNames()),
                     new Interval(
                         178888,
                         1999999
@@ -321,6 +326,7 @@ public class RetryQueryRunnerTest
               // assume 2 missing segments at first run
               ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                   new SegmentDescriptor(
+                      Iterables.getOnlyElement(query.getDataSource().getNames()),
                       new Interval(
                           178888,
                           1999999
@@ -329,6 +335,7 @@ public class RetryQueryRunnerTest
               );
               ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                   new SegmentDescriptor(
+                      Iterables.getOnlyElement(query.getDataSource().getNames()),
                       new Interval(
                           178888,
                           1999999
@@ -352,6 +359,7 @@ public class RetryQueryRunnerTest
               // assume only left 1 missing at first retry
               ((List) context.get(Result.MISSING_SEGMENTS_KEY)).add(
                   new SegmentDescriptor(
+                      Iterables.getOnlyElement(query.getDataSource().getNames()),
                       new Interval(
                           178888,
                           1999999

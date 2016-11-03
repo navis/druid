@@ -262,7 +262,7 @@ public class ServerManager implements QuerySegmentWalker
     if (!(dataSource instanceof TableDataSource)) {
       throw new UnsupportedOperationException("data source type '" + dataSource.getClass().getName() + "' unsupported");
     }
-    String dataSourceName = getDataSourceName(dataSource);
+    final String dataSourceName = getDataSourceName(dataSource);
 
     final VersionedIntervalTimeline<String, ReferenceCountingSegment> timeline = dataSources.get(dataSourceName);
 
@@ -308,6 +308,7 @@ public class ServerManager implements QuerySegmentWalker
                                 toolChest,
                                 input.getObject(),
                                 new SegmentDescriptor(
+                                    dataSourceName,
                                     holder.getInterval(),
                                     holder.getVersion(),
                                     input.getChunkNumber()
@@ -352,16 +353,6 @@ public class ServerManager implements QuerySegmentWalker
 
     final QueryToolChest<T, Query<T>> toolChest = factory.getToolchest();
 
-    String dataSourceName = getDataSourceName(query.getDataSource());
-
-    final VersionedIntervalTimeline<String, ReferenceCountingSegment> timeline = dataSources.get(
-        dataSourceName
-    );
-
-    if (timeline == null) {
-      return new NoopQueryRunner<T>();
-    }
-
     final Function<Query<T>, ServiceMetricEvent.Builder> builderFn = getBuilderFn(toolChest);
     final AtomicLong cpuTimeAccumulator = new AtomicLong(0L);
 
@@ -374,6 +365,13 @@ public class ServerManager implements QuerySegmentWalker
               @SuppressWarnings("unchecked")
               public Iterable<QueryRunner<T>> apply(SegmentDescriptor input)
               {
+                final VersionedIntervalTimeline<String, ReferenceCountingSegment> timeline = dataSources.get(
+                    input.getDataSource()
+                );
+
+                if (timeline == null) {
+                  return Arrays.<QueryRunner<T>>asList(new NoopQueryRunner<T>());
+                }
 
                 final PartitionHolder<ReferenceCountingSegment> entry = timeline.findEntry(
                     input.getInterval(), input.getVersion()

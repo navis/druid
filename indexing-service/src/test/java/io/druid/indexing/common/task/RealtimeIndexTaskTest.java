@@ -384,6 +384,7 @@ public class RealtimeIndexTaskTest
       final Pair<Executor, Runnable> executorRunnablePair = entry.getValue();
       Assert.assertEquals(
           new SegmentDescriptor(
+              publishedSegment.getDataSource(),
               publishedSegment.getInterval(),
               publishedSegment.getVersion(),
               publishedSegment.getShardSpec().getPartitionNum()
@@ -542,6 +543,7 @@ public class RealtimeIndexTaskTest
       final Pair<Executor, Runnable> executorRunnablePair = entry.getValue();
       Assert.assertEquals(
           new SegmentDescriptor(
+              publishedSegment.getDataSource(),
               publishedSegment.getInterval(),
               publishedSegment.getVersion(),
               publishedSegment.getShardSpec().getPartitionNum()
@@ -643,6 +645,7 @@ public class RealtimeIndexTaskTest
         final Pair<Executor, Runnable> executorRunnablePair = entry.getValue();
         Assert.assertEquals(
             new SegmentDescriptor(
+                publishedSegment.getDataSource(),
                 publishedSegment.getInterval(),
                 publishedSegment.getVersion(),
                 publishedSegment.getShardSpec().getPartitionNum()
@@ -742,6 +745,7 @@ public class RealtimeIndexTaskTest
         final Pair<Executor, Runnable> executorRunnablePair = entry.getValue();
         Assert.assertEquals(
             new SegmentDescriptor(
+                publishedSegment.getDataSource(),
                 publishedSegment.getInterval(),
                 publishedSegment.getVersion(),
                 publishedSegment.getShardSpec().getPartitionNum()

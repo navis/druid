@@ -31,7 +31,6 @@ import io.druid.timeline.TimelineObjectHolder;
 import io.druid.timeline.partition.PartitionChunk;
 import org.joda.time.Interval;
 
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -55,21 +54,23 @@ public class ServerViewUtil
       int numCandidates
   )
   {
-    TimelineLookup<String, ServerSelector> timeline = serverView.getTimeline(datasource);
-    if (timeline == null) {
-      return Collections.emptyList();
-    }
     List<LocatedSegmentDescriptor> located = Lists.newArrayList();
-    for (Interval interval : intervals) {
-      for (TimelineObjectHolder<String, ServerSelector> holder : timeline.lookup(interval)) {
-        for (PartitionChunk<ServerSelector> chunk : holder.getObject()) {
-          ServerSelector selector = chunk.getObject();
-          final SegmentDescriptor descriptor = new SegmentDescriptor(
-              holder.getInterval(), holder.getVersion(), chunk.getChunkNumber()
-          );
-          long size = selector.getSegment().getSize();
-          List<DruidServerMetadata> candidates = selector.getCandidates(numCandidates);
-          located.add(new LocatedSegmentDescriptor(descriptor, size, candidates));
+    for (String table : datasource.getNames()) {
+      TimelineLookup<String, ServerSelector> timeline = serverView.getTimeline(new TableDataSource(table));
+      if (timeline == null) {
+        continue;
+      }
+      for (Interval interval : intervals) {
+        for (TimelineObjectHolder<String, ServerSelector> holder : timeline.lookup(interval)) {
+          for (PartitionChunk<ServerSelector> chunk : holder.getObject()) {
+            ServerSelector selector = chunk.getObject();
+            final SegmentDescriptor descriptor = new SegmentDescriptor(
+                table, holder.getInterval(), holder.getVersion(), chunk.getChunkNumber()
+            );
+            long size = selector.getSegment().getSize();
+            List<DruidServerMetadata> candidates = selector.getCandidates(numCandidates);
+            located.add(new LocatedSegmentDescriptor(descriptor, size, candidates));
+          }
         }
       }
     }

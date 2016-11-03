@@ -61,6 +61,7 @@ import io.druid.query.QueryToolChest;
 import io.druid.query.QueryToolChestWarehouse;
 import io.druid.query.Result;
 import io.druid.query.SegmentDescriptor;
+import io.druid.query.TableDataSource;
 import io.druid.query.aggregation.MetricManipulatorFns;
 import io.druid.query.filter.DimFilterUtils;
 import io.druid.query.spec.MultipleSpecificSegmentSpec;
@@ -159,167 +160,174 @@ public class CachingClusteredClient<T> implements QueryRunner<T>
       contextBuilder.put("bySegment", true);
     }
 
-    TimelineLookup<String, ServerSelector> timeline = serverView.getTimeline(query.getDataSource());
+    for (String dataSource : query.getDataSource().getNames()) {
+      TableDataSource realSource = new TableDataSource(dataSource);
 
-    if (timeline == null) {
-      return Sequences.empty();
-    }
+      Query<T> realQuery = query.withDataSource(realSource);
+      TimelineLookup<String, ServerSelector> timeline = serverView.getTimeline(realSource);
 
-    // build set of segments to query
-    Set<Pair<ServerSelector, SegmentDescriptor>> segments = Sets.newLinkedHashSet();
+      if (timeline == null) {
+        continue;
+      }
 
-    List<TimelineObjectHolder<String, ServerSelector>> serversLookup = Lists.newLinkedList();
+      // build set of segments to query
+      Set<Pair<ServerSelector, SegmentDescriptor>> segments = Sets.newLinkedHashSet();
 
-    // Note that enabling this leads to putting uncovered intervals information in the response headers
-    // and might blow up in some cases https://github.com/druid-io/druid/issues/2108
-    int uncoveredIntervalsLimit = BaseQuery.getContextUncoveredIntervalsLimit(query, 0);
+      List<TimelineObjectHolder<String, ServerSelector>> serversLookup = Lists.newLinkedList();
 
-    if (uncoveredIntervalsLimit > 0) {
-      List<Interval> uncoveredIntervals = Lists.newArrayListWithCapacity(uncoveredIntervalsLimit);
-      boolean uncoveredIntervalsOverflowed = false;
+      // Note that enabling this leads to putting uncovered intervals information in the response headers
+      // and might blow up in some cases https://github.com/druid-io/druid/issues/2108
+      int uncoveredIntervalsLimit = BaseQuery.getContextUncoveredIntervalsLimit(realQuery, 0);
 
-      for (Interval interval : query.getIntervals()) {
-        Iterable<TimelineObjectHolder<String, ServerSelector>> lookup = timeline.lookup(interval);
-        long startMillis = interval.getStartMillis();
-        long endMillis = interval.getEndMillis();
-        for (TimelineObjectHolder<String, ServerSelector> holder : lookup) {
-          Interval holderInterval = holder.getInterval();
-          long intervalStart = holderInterval.getStartMillis();
-          if (!uncoveredIntervalsOverflowed && startMillis != intervalStart) {
+      if (uncoveredIntervalsLimit > 0) {
+        List<Interval> uncoveredIntervals = Lists.newArrayListWithCapacity(uncoveredIntervalsLimit);
+        boolean uncoveredIntervalsOverflowed = false;
+
+        for (Interval interval : realQuery.getIntervals()) {
+          Iterable<TimelineObjectHolder<String, ServerSelector>> lookup = timeline.lookup(interval);
+          long startMillis = interval.getStartMillis();
+          long endMillis = interval.getEndMillis();
+          for (TimelineObjectHolder<String, ServerSelector> holder : lookup) {
+            Interval holderInterval = holder.getInterval();
+            long intervalStart = holderInterval.getStartMillis();
+            if (!uncoveredIntervalsOverflowed && startMillis != intervalStart) {
+              if (uncoveredIntervalsLimit > uncoveredIntervals.size()) {
+                uncoveredIntervals.add(new Interval(startMillis, intervalStart));
+              } else {
+                uncoveredIntervalsOverflowed = true;
+              }
+            }
+            startMillis = holderInterval.getEndMillis();
+            serversLookup.add(holder);
+          }
+
+          if (!uncoveredIntervalsOverflowed && startMillis < endMillis) {
             if (uncoveredIntervalsLimit > uncoveredIntervals.size()) {
-              uncoveredIntervals.add(new Interval(startMillis, intervalStart));
+              uncoveredIntervals.add(new Interval(startMillis, endMillis));
             } else {
               uncoveredIntervalsOverflowed = true;
             }
           }
-          startMillis = holderInterval.getEndMillis();
-          serversLookup.add(holder);
         }
 
-        if (!uncoveredIntervalsOverflowed && startMillis < endMillis) {
-          if (uncoveredIntervalsLimit > uncoveredIntervals.size()) {
-            uncoveredIntervals.add(new Interval(startMillis, endMillis));
-          } else {
-            uncoveredIntervalsOverflowed = true;
+        if (!uncoveredIntervals.isEmpty()) {
+          // This returns intervals for which NO segment is present.
+          // Which is not necessarily an indication that the data doesn't exist or is
+          // incomplete. The data could exist and just not be loaded yet.  In either
+          // case, though, this query will not include any data from the identified intervals.
+          responseContext.put("uncoveredIntervals", uncoveredIntervals);
+          responseContext.put("uncoveredIntervalsOverflowed", uncoveredIntervalsOverflowed);
+        }
+      } else {
+        for (Interval interval : realQuery.getIntervals()) {
+          Iterables.addAll(serversLookup, timeline.lookup(interval));
+        }
+      }
+
+      // Let tool chest filter out unneeded segments
+      final List<TimelineObjectHolder<String, ServerSelector>> filteredServersLookup =
+          toolChest.filterSegments(realQuery, serversLookup);
+      Map<String, Optional<RangeSet<String>>> dimensionRangeCache = Maps.newHashMap();
+
+      // Filter unneeded chunks based on partition dimension
+      for (TimelineObjectHolder<String, ServerSelector> holder : filteredServersLookup) {
+        final Set<PartitionChunk<ServerSelector>> filteredChunks = DimFilterUtils.filterShards(
+            realQuery.getFilter(),
+            holder.getObject(),
+            new Function<PartitionChunk<ServerSelector>, ShardSpec>()
+            {
+              @Override
+              public ShardSpec apply(PartitionChunk<ServerSelector> input)
+              {
+                return input.getObject().getSegment().getShardSpec();
+              }
+            },
+            dimensionRangeCache
+        );
+        for (PartitionChunk<ServerSelector> chunk : filteredChunks) {
+          ServerSelector selector = chunk.getObject();
+          final SegmentDescriptor descriptor = new SegmentDescriptor(
+              dataSource, holder.getInterval(), holder.getVersion(), chunk.getChunkNumber()
+          );
+          segments.add(Pair.of(selector, descriptor));
+        }
+      }
+
+      final byte[] queryCacheKey;
+
+      if ((populateCache || useCache) // implies strategy != null
+          && !isBySegment) // explicit bySegment queries are never cached
+      {
+        queryCacheKey = strategy.computeCacheKey(realQuery);
+      } else {
+        queryCacheKey = null;
+      }
+
+      if (queryCacheKey != null) {
+        // cachKeys map must preserve segment ordering, in order for shards to always be combined in the same order
+        Map<Pair<ServerSelector, SegmentDescriptor>, Cache.NamedKey> cacheKeys = Maps.newLinkedHashMap();
+        for (Pair<ServerSelector, SegmentDescriptor> segment : segments) {
+          final Cache.NamedKey segmentCacheKey = CacheUtil.computeSegmentCacheKey(
+              segment.lhs.getSegment().getIdentifier(),
+              segment.rhs,
+              queryCacheKey
+          );
+          cacheKeys.put(segment, segmentCacheKey);
+        }
+
+        // Pull cached segments from cache and remove from set of segments to query
+        final Map<Cache.NamedKey, byte[]> cachedValues;
+        if (useCache) {
+          cachedValues = cache.getBulk(Iterables.limit(cacheKeys.values(), cacheConfig.getCacheBulkMergeLimit()));
+        } else {
+          cachedValues = ImmutableMap.of();
+        }
+
+        for (Map.Entry<Pair<ServerSelector, SegmentDescriptor>, Cache.NamedKey> entry : cacheKeys.entrySet()) {
+          Pair<ServerSelector, SegmentDescriptor> segment = entry.getKey();
+          Cache.NamedKey segmentCacheKey = entry.getValue();
+          final Interval segmentQueryInterval = segment.rhs.getInterval();
+
+          final byte[] cachedValue = cachedValues.get(segmentCacheKey);
+          if (cachedValue != null) {
+            // remove cached segment from set of segments to query
+            segments.remove(segment);
+            cachedResults.add(Pair.of(segmentQueryInterval, cachedValue));
+          } else if (populateCache) {
+            // otherwise, if populating cache, add segment to list of segments to cache
+            final String segmentIdentifier = segment.lhs.getSegment().getIdentifier();
+            cachePopulatorMap.put(
+                String.format("%s_%s", segmentIdentifier, segmentQueryInterval),
+                new CachePopulator(cache, objectMapper, segmentCacheKey)
+            );
           }
         }
       }
 
-      if (!uncoveredIntervals.isEmpty()) {
-        // This returns intervals for which NO segment is present.
-        // Which is not necessarily an indication that the data doesn't exist or is
-        // incomplete. The data could exist and just not be loaded yet.  In either
-        // case, though, this query will not include any data from the identified intervals.
-        responseContext.put("uncoveredIntervals", uncoveredIntervals);
-        responseContext.put("uncoveredIntervalsOverflowed", uncoveredIntervalsOverflowed);
-      }
-    } else {
-      for (Interval interval : query.getIntervals()) {
-        Iterables.addAll(serversLookup, timeline.lookup(interval));
-      }
-    }
-
-    // Let tool chest filter out unneeded segments
-    final List<TimelineObjectHolder<String, ServerSelector>> filteredServersLookup =
-        toolChest.filterSegments(query, serversLookup);
-    Map<String, Optional<RangeSet<String>>> dimensionRangeCache = Maps.newHashMap();
-
-    // Filter unneeded chunks based on partition dimension
-    for (TimelineObjectHolder<String, ServerSelector> holder : filteredServersLookup) {
-      final Set<PartitionChunk<ServerSelector>> filteredChunks = DimFilterUtils.filterShards(
-          query.getFilter(),
-          holder.getObject(),
-          new Function<PartitionChunk<ServerSelector>, ShardSpec>()
-          {
-            @Override
-            public ShardSpec apply(PartitionChunk<ServerSelector> input)
-            {
-              return input.getObject().getSegment().getShardSpec();
-            }
-          },
-          dimensionRangeCache
-      );
-      for (PartitionChunk<ServerSelector> chunk : filteredChunks) {
-        ServerSelector selector = chunk.getObject();
-        final SegmentDescriptor descriptor = new SegmentDescriptor(
-            holder.getInterval(), holder.getVersion(), chunk.getChunkNumber()
-        );
-        segments.add(Pair.of(selector, descriptor));
-      }
-    }
-
-    final byte[] queryCacheKey;
-
-    if ((populateCache || useCache) // implies strategy != null
-        && !isBySegment) // explicit bySegment queries are never cached
-    {
-      queryCacheKey = strategy.computeCacheKey(query);
-    } else {
-      queryCacheKey = null;
-    }
-
-    if (queryCacheKey != null) {
-      // cachKeys map must preserve segment ordering, in order for shards to always be combined in the same order
-      Map<Pair<ServerSelector, SegmentDescriptor>, Cache.NamedKey> cacheKeys = Maps.newLinkedHashMap();
+      // Compile list of all segments not pulled from cache
       for (Pair<ServerSelector, SegmentDescriptor> segment : segments) {
-        final Cache.NamedKey segmentCacheKey = CacheUtil.computeSegmentCacheKey(
-            segment.lhs.getSegment().getIdentifier(),
-            segment.rhs,
-            queryCacheKey
-        );
-        cacheKeys.put(segment, segmentCacheKey);
-      }
+        final QueryableDruidServer queryableDruidServer = segment.lhs.pick();
 
-      // Pull cached segments from cache and remove from set of segments to query
-      final Map<Cache.NamedKey, byte[]> cachedValues;
-      if (useCache) {
-        cachedValues = cache.getBulk(Iterables.limit(cacheKeys.values(), cacheConfig.getCacheBulkMergeLimit()));
-      } else {
-        cachedValues = ImmutableMap.of();
-      }
+        if (queryableDruidServer == null) {
+          log.makeAlert(
+              "No servers found for SegmentDescriptor[%s] for DataSource[%s]?! How can this be?!",
+              segment.rhs,
+              realQuery.getDataSource()
+          ).emit();
+        } else {
+          final DruidServer server = queryableDruidServer.getServer();
+          List<SegmentDescriptor> descriptors = serverSegments.get(server);
+          if (descriptors == null) {
+            serverSegments.put(server, descriptors = Lists.newArrayList());
+          }
 
-      for (Map.Entry<Pair<ServerSelector, SegmentDescriptor>, Cache.NamedKey> entry : cacheKeys.entrySet()) {
-        Pair<ServerSelector, SegmentDescriptor> segment = entry.getKey();
-        Cache.NamedKey segmentCacheKey = entry.getValue();
-        final Interval segmentQueryInterval = segment.rhs.getInterval();
-
-        final byte[] cachedValue = cachedValues.get(segmentCacheKey);
-        if (cachedValue != null) {
-          // remove cached segment from set of segments to query
-          segments.remove(segment);
-          cachedResults.add(Pair.of(segmentQueryInterval, cachedValue));
-        } else if (populateCache) {
-          // otherwise, if populating cache, add segment to list of segments to cache
-          final String segmentIdentifier = segment.lhs.getSegment().getIdentifier();
-          cachePopulatorMap.put(
-              String.format("%s_%s", segmentIdentifier, segmentQueryInterval),
-              new CachePopulator(cache, objectMapper, segmentCacheKey)
-          );
+          descriptors.add(segment.rhs);
         }
       }
     }
 
-    // Compile list of all segments not pulled from cache
-    for (Pair<ServerSelector, SegmentDescriptor> segment : segments) {
-      final QueryableDruidServer queryableDruidServer = segment.lhs.pick();
-
-      if (queryableDruidServer == null) {
-        log.makeAlert(
-            "No servers found for SegmentDescriptor[%s] for DataSource[%s]?! How can this be?!",
-            segment.rhs,
-            query.getDataSource()
-        ).emit();
-      } else {
-        final DruidServer server = queryableDruidServer.getServer();
-        List<SegmentDescriptor> descriptors = serverSegments.get(server);
-
-        if (descriptors == null) {
-          descriptors = Lists.newArrayList();
-          serverSegments.put(server, descriptors);
-        }
-
-        descriptors.add(segment.rhs);
-      }
+    if (serverSegments.isEmpty()) {
+      return Sequences.empty();
     }
 
     return new LazySequence<>(

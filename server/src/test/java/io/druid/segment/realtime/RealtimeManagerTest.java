@@ -495,6 +495,7 @@ public class RealtimeManagerTest
               query,
               ImmutableList.<SegmentDescriptor>of(
                   new SegmentDescriptor(
+                      QueryRunnerTestHelper.dataSource,
                       new Interval("2011-04-01T00:00:00.000Z/2011-04-03T00:00:00.000Z"),
                       "ver",
                       0
@@ -510,6 +511,7 @@ public class RealtimeManagerTest
               query,
               ImmutableList.<SegmentDescriptor>of(
                   new SegmentDescriptor(
+                      QueryRunnerTestHelper.dataSource,
                       new Interval("2011-04-01T00:00:00.000Z/2011-04-03T00:00:00.000Z"),
                       "ver",
                       1
@@ -571,10 +573,10 @@ public class RealtimeManagerTest
 
     final Interval interval_26_28 = new Interval("2011-03-26T00:00:00.000Z/2011-03-28T00:00:00.000Z");
     final Interval interval_28_29 = new Interval("2011-03-28T00:00:00.000Z/2011-03-29T00:00:00.000Z");
-    final SegmentDescriptor descriptor_26_28_0 = new SegmentDescriptor(interval_26_28, "ver0", 0);
-    final SegmentDescriptor descriptor_28_29_0 = new SegmentDescriptor(interval_28_29, "ver1", 0);
-    final SegmentDescriptor descriptor_26_28_1 = new SegmentDescriptor(interval_26_28, "ver0", 1);
-    final SegmentDescriptor descriptor_28_29_1 = new SegmentDescriptor(interval_28_29, "ver1", 1);
+    final SegmentDescriptor descriptor_26_28_0 = new SegmentDescriptor(QueryRunnerTestHelper.dataSource, interval_26_28, "ver0", 0);
+    final SegmentDescriptor descriptor_28_29_0 = new SegmentDescriptor(QueryRunnerTestHelper.dataSource, interval_28_29, "ver1", 0);
+    final SegmentDescriptor descriptor_26_28_1 = new SegmentDescriptor(QueryRunnerTestHelper.dataSource, interval_26_28, "ver0", 1);
+    final SegmentDescriptor descriptor_28_29_1 = new SegmentDescriptor(QueryRunnerTestHelper.dataSource, interval_28_29, "ver1", 1);
 
     GroupByQuery query = GroupByQuery
         .builder()

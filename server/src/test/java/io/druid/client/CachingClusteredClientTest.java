@@ -1753,10 +1753,10 @@ public class CachingClusteredClientTest
     EasyMock.replay(mockRunner);
 
     List<SegmentDescriptor> descriptors = new ArrayList<>();
-    descriptors.add(new SegmentDescriptor(interval1, "v", 1));
-    descriptors.add(new SegmentDescriptor(interval1, "v", 3));
-    descriptors.add(new SegmentDescriptor(interval2, "v", 5));
-    descriptors.add(new SegmentDescriptor(interval3, "v", 6));
+    descriptors.add(new SegmentDescriptor(DATA_SOURCE, interval1, "v", 1));
+    descriptors.add(new SegmentDescriptor(DATA_SOURCE, interval1, "v", 3));
+    descriptors.add(new SegmentDescriptor(DATA_SOURCE, interval2, "v", 5));
+    descriptors.add(new SegmentDescriptor(DATA_SOURCE, interval3, "v", 6));
     MultipleSpecificSegmentSpec expected = new MultipleSpecificSegmentSpec(descriptors);
 
     Sequences.toList(runner.run(

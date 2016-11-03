@@ -167,6 +167,7 @@ public class CachingQueryRunnerTest
   )
       throws Exception
   {
+    final String dataSource = Iterables.getOnlyElement(query.getDataSource().getNames());
     final AssertingClosable closable = new AssertingClosable();
     final Sequence resultSeq = new ResourceClosingSequence(
         Sequences.simple(expectedRes), closable
@@ -186,7 +187,7 @@ public class CachingQueryRunnerTest
     Cache cache = MapCache.create(1024 * 1024);
 
     String segmentIdentifier = "segment";
-    SegmentDescriptor segmentDescriptor = new SegmentDescriptor(new Interval("2011/2012"), "version", 0);
+    SegmentDescriptor segmentDescriptor = new SegmentDescriptor(dataSource, new Interval("2011/2012"), "version", 0);
 
     DefaultObjectMapper objectMapper = new DefaultObjectMapper();
     CachingQueryRunner runner = new CachingQueryRunner(
@@ -259,9 +260,10 @@ public class CachingQueryRunnerTest
       QueryToolChest toolchest
   ) throws Exception
   {
+    final String dataSource = Iterables.getOnlyElement(query.getDataSource().getNames());
     DefaultObjectMapper objectMapper = new DefaultObjectMapper();
     String segmentIdentifier = "segment";
-    SegmentDescriptor segmentDescriptor = new SegmentDescriptor(new Interval("2011/2012"), "version", 0);
+    SegmentDescriptor segmentDescriptor = new SegmentDescriptor(dataSource, new Interval("2011/2012"), "version", 0);
 
     CacheStrategy cacheStrategy = toolchest.getCacheStrategy(query);
     Cache.NamedKey cacheKey = CacheUtil.computeSegmentCacheKey(

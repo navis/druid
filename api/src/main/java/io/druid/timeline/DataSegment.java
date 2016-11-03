@@ -209,7 +209,7 @@ public class DataSegment implements Comparable<DataSegment>
 
   public SegmentDescriptor toDescriptor()
   {
-    return new SegmentDescriptor(interval, version, shardSpec.getPartitionNum());
+    return new SegmentDescriptor(dataSource, interval, version, shardSpec.getPartitionNum());
   }
 
   public DataSegment withLoadSpec(Map<String, Object> loadSpec)

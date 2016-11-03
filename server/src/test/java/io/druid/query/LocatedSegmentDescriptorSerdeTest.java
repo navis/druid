@@ -38,7 +38,7 @@ public class LocatedSegmentDescriptorSerdeTest
   public void testDimensionsSpecSerde() throws Exception
   {
     LocatedSegmentDescriptor expected = new LocatedSegmentDescriptor(
-        new SegmentDescriptor(new Interval(100, 200), "version", 100),
+        new SegmentDescriptor("foo", new Interval(100, 200), "version", 100),
         65535,
         Arrays.asList(
             new DruidServerMetadata("server1", "host1", 30000L, "historical", "tier1", 0),
